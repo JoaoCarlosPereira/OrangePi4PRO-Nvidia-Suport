@@ -67,12 +67,47 @@ The GPU needs its own power supply. The Orange Pi cannot feed a discrete card.
 
 ### 1. Flash the prebuilt image
 
-The fastest path. See [releases](../../releases) — the image expands to fill your
-card on first boot, like any official Orange Pi image.
+The fastest path. See [releases](../../releases). The image behaves like any
+official Orange Pi image: flash it, boot, and the filesystem expands to fill your
+card automatically.
 
-> **Note on image size.** The image is several GB compressed and is split into
-> parts, because GitHub limits release assets to 2 GB each. Rejoin before
-> flashing — instructions are in the release notes.
+**Requirements:** a card of **17 GB or larger**, and an NVIDIA Ampere GPU on a
+powered PCIe riser.
+
+GitHub caps release assets at 2 GB, so the image ships split. Rejoin, verify, and
+flash:
+
+```bash
+cat orangepi4pro-egpu.img.xz.part-* > orangepi4pro-egpu.img.xz
+sha256sum -c orangepi4pro-egpu.img.xz.sha256
+
+xz -dc orangepi4pro-egpu.img.xz | sudo dd of=/dev/sdX bs=4M status=progress
+sync
+```
+
+Replace `/dev/sdX` with your card — **check it twice with `lsblk`**, `dd` will
+happily overwrite the wrong disk. Balena Etcher also works and takes the `.img.xz`
+directly.
+
+**First boot:**
+
+1. The root filesystem expands to fill the card (this can add up to a minute).
+2. You will be asked to set a new password and create your user.
+3. Video output through the GPU starts **disabled**, because the image has to boot
+   on machines that have no GPU attached. Turn it on once you are logged in:
+
+```bash
+sudo egpu-video-check     # confirm the GPU and its connectors are seen
+sudo egpu-video-enable    # switch X to the NVIDIA card
+sudo systemctl restart lightdm
+```
+
+If X fails to come up, a watchdog reverts to the Allwinner HDMI 75 seconds after
+boot — you will not be locked out.
+
+> **What the image contains:** the patched NVIDIA 580.142 modules, the driver and
+> kernel source trees used to build them, the device tree overlays, and all the
+> `egpu-*` tooling. No personal data — see [SECURITY.md](SECURITY.md).
 
 ### 2. Build it yourself
 
