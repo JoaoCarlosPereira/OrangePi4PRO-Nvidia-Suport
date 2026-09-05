@@ -1,0 +1,9 @@
+[Unit]
+Description=Dispara a verificacao do X na eGPU depois do boot
+
+[Timer]
+OnBootSec=75
+Unit=egpu-video-watchdog.service
+
+[Install]
+WantedBy=timers.target

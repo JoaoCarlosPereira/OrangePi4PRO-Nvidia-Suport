@@ -1,0 +1,1594 @@
+From ac7630de5121c94080a633c273d1e38f516afc8c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mario=20B=C4=83l=C4=83nic=C4=83?=
+ <mariobalanica02@gmail.com>
+Date: Wed, 19 Nov 2025 15:00:29 -0500
+Subject: [PATCH 1/5] Query OS for chipset I/O cache coherency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Mario Bălănică <mariobalanica02@gmail.com>
+---
+ kernel-open/common/inc/nv.h                         |  2 ++
+ kernel-open/conftest.sh                             | 13 +++++++++++++
+ kernel-open/nvidia/nv-dma.c                         | 11 +++++++++++
+ kernel-open/nvidia/nvidia.Kbuild                    |  1 +
+ src/nvidia/arch/nvalloc/unix/include/nv.h           |  2 ++
+ src/nvidia/arch/nvalloc/unix/src/os.c               | 10 ++++++++++
+ src/nvidia/generated/g_os_nvoc.h                    |  2 ++
+ src/nvidia/src/kernel/platform/chipset/chipset.c    |  7 -------
+ .../src/kernel/platform/chipset/chipset_pcie.c      |  8 ++++++++
+ 9 files changed, 49 insertions(+), 7 deletions(-)
+
+diff --git a/kernel-open/common/inc/nv.h b/kernel-open/common/inc/nv.h
+index d431423bb4..fef7881821 100644
+--- a/kernel-open/common/inc/nv.h
++++ b/kernel-open/common/inc/nv.h
+@@ -924,6 +924,8 @@ void       NV_API_CALL  nv_dma_unmap_mmio        (nv_dma_device_t *, NvU64, NvU6
+ void       NV_API_CALL  nv_dma_cache_invalidate  (nv_dma_device_t *, void *);
+ NvBool     NV_API_CALL  nv_grdma_pci_topology_supported(nv_state_t *, nv_dma_device_t *);
+ 
++NvBool     NV_API_CALL  nv_dev_is_dma_coherent   (nv_dma_device_t *);
++
+ NvS32  NV_API_CALL  nv_start_rc_timer            (nv_state_t *);
+ NvS32  NV_API_CALL  nv_stop_rc_timer             (nv_state_t *);
+ 
+diff --git a/kernel-open/conftest.sh b/kernel-open/conftest.sh
+index cfa3871297..99de2649de 100755
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -2467,6 +2467,19 @@ compile_test() {
+             compile_check_conftest "$CODE" "NV_DMA_IS_DIRECT_PRESENT" "" "functions"
+         ;;
+ 
++        dev_is_dma_coherent)
++            #
++            # Determine whether dev_is_dma_coherent() exists.
++            #
++            CODE="
++            #include <linux/dma-map-ops.h>
++            void conftest_dev_is_dma_coherent(void) {
++                dev_is_dma_coherent();
++            }"
++
++            compile_check_conftest "$CODE" "NV_DEV_IS_DMA_COHERENT_PRESENT" "" "functions"
++        ;;
++
+         cmd_uphy_display_port_init)
+             #
+             # Determine if CMD_UPHY_DISPLAY_PORT_INIT enum present in bpmp-abi header
+diff --git a/kernel-open/nvidia/nv-dma.c b/kernel-open/nvidia/nv-dma.c
+index 2984af848d..6530fb152b 100644
+--- a/kernel-open/nvidia/nv-dma.c
++++ b/kernel-open/nvidia/nv-dma.c
+@@ -909,6 +909,17 @@ void NV_API_CALL nv_dma_cache_invalidate
+ #endif
+ }
+ 
++NvBool NV_API_CALL nv_dev_is_dma_coherent
++(
++    nv_dma_device_t *dma_dev
++)
++{
++#if defined(NV_DEV_IS_DMA_COHERENT_PRESENT)
++    return dev_is_dma_coherent(dma_dev->dev);
++#endif
++    return true;
++}
++
+ #if defined(NV_DRM_AVAILABLE)
+ 
+ static inline void
+diff --git a/kernel-open/nvidia/nvidia.Kbuild b/kernel-open/nvidia/nvidia.Kbuild
+index 43416d2527..1c08a59b2c 100644
+--- a/kernel-open/nvidia/nvidia.Kbuild
++++ b/kernel-open/nvidia/nvidia.Kbuild
+@@ -125,6 +125,7 @@ NV_CONFTEST_FUNCTION_COMPILE_TESTS += phys_to_dma
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += pci_rebar_get_possible_sizes
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += get_backlight_device_by_name
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += dma_direct_map_resource
++NV_CONFTEST_FUNCTION_COMPILE_TESTS += dev_is_dma_coherent
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += flush_cache_all
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += vmf_insert_pfn
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += jiffies_to_timespec
+diff --git a/src/nvidia/arch/nvalloc/unix/include/nv.h b/src/nvidia/arch/nvalloc/unix/include/nv.h
+index 519c260cfb..4ca3f0ccf6 100644
+--- a/src/nvidia/arch/nvalloc/unix/include/nv.h
++++ b/src/nvidia/arch/nvalloc/unix/include/nv.h
+@@ -924,6 +924,8 @@ void       NV_API_CALL  nv_dma_unmap_mmio        (nv_dma_device_t *, NvU64, NvU6
+ void       NV_API_CALL  nv_dma_cache_invalidate  (nv_dma_device_t *, void *);
+ NvBool     NV_API_CALL  nv_grdma_pci_topology_supported(nv_state_t *, nv_dma_device_t *);
+ 
++NvBool     NV_API_CALL  nv_dev_is_dma_coherent   (nv_dma_device_t *);
++
+ NvS32  NV_API_CALL  nv_start_rc_timer            (nv_state_t *);
+ NvS32  NV_API_CALL  nv_stop_rc_timer             (nv_state_t *);
+ 
+diff --git a/src/nvidia/arch/nvalloc/unix/src/os.c b/src/nvidia/arch/nvalloc/unix/src/os.c
+index 2c1a89c22c..1dd6e6c150 100644
+--- a/src/nvidia/arch/nvalloc/unix/src/os.c
++++ b/src/nvidia/arch/nvalloc/unix/src/os.c
+@@ -1706,6 +1706,16 @@ void osFlushGpuCoherentCpuCacheRange
+     nv_flush_coherent_cpu_cache_range(pOsGpuInfo, cpuVirtual, size);
+ }
+ 
++NvBool osDevIsDmaCoherent
++(
++    OBJGPU  *pGpu
++)
++{
++    nv_state_t *nv = NV_GET_NV_STATE(pGpu);
++
++    return nv_dev_is_dma_coherent(nv->dma_dev);
++}
++
+ void osErrorLogV(OBJGPU *pGpu, XidContext context, const char * pFormat, va_list arglist)
+ {
+     NV_STATUS        rmStatus;
+diff --git a/src/nvidia/generated/g_os_nvoc.h b/src/nvidia/generated/g_os_nvoc.h
+index 08c3d1a3a9..58e4631c20 100644
+--- a/src/nvidia/generated/g_os_nvoc.h
++++ b/src/nvidia/generated/g_os_nvoc.h
+@@ -799,6 +799,8 @@ void osFlushGpuCoherentCpuCacheRange(OS_GPU_INFO *pOsGpuInfo,
+                                      NvU64 size);
+ NvBool osUidTokensEqual(PUID_TOKEN arg1, PUID_TOKEN arg2);
+ 
++NvBool osDevIsDmaCoherent(OBJGPU *pGpu);
++
+ NV_STATUS osValidateClientTokens(PSECURITY_TOKEN  arg1,
+                                  PSECURITY_TOKEN  arg2);
+ PUID_TOKEN osGetCurrentUidToken(void);
+diff --git a/src/nvidia/src/kernel/platform/chipset/chipset.c b/src/nvidia/src/kernel/platform/chipset/chipset.c
+index c76ef1028c..ad48145b1e 100644
+--- a/src/nvidia/src/kernel/platform/chipset/chipset.c
++++ b/src/nvidia/src/kernel/platform/chipset/chipset.c
+@@ -50,13 +50,6 @@ clConstruct_IMPL(OBJCL *pCl)
+ 
+     pCl->pPcieConfigSpaceBase = NULL;
+ 
+-    //
+-    // We set this property by default.
+-    // Chipset setup function can override this.
+-    // Right now only Tegra chipsets overide this setting.
+-    //
+-    pCl->setProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT, NV_TRUE);
+-
+     return NV_OK;
+ }
+ 
+diff --git a/src/nvidia/src/kernel/platform/chipset/chipset_pcie.c b/src/nvidia/src/kernel/platform/chipset/chipset_pcie.c
+index d834ab4240..d057d81321 100644
+--- a/src/nvidia/src/kernel/platform/chipset/chipset_pcie.c
++++ b/src/nvidia/src/kernel/platform/chipset/chipset_pcie.c
+@@ -971,6 +971,14 @@ clUpdatePcieConfig_IMPL(OBJGPU *pGpu, OBJCL *pCl)
+ 
+     objClBuildPcieAtomicsAllowList(pGpu, pCl);
+ 
++    //
++    // Check if the GPU device is on a cache-coherent bus.
++    //
++    if (osDevIsDmaCoherent(pGpu))
++    {
++        pCl->setProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT, NV_TRUE);
++    }
++
+     objClInitPcieChipset(pGpu, pCl);
+ 
+     //
+
+From 95bc81d278b66e6b7bbed6b7d8eca8feb9cdce4b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mario=20B=C4=83l=C4=83nic=C4=83?=
+ <mariobalanica02@gmail.com>
+Date: Wed, 19 Nov 2025 15:00:44 -0500
+Subject: [PATCH 2/5] Disable WC iomaps by default for unknown Arm chipsets
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Arm platforms have historically had issues (corruption, bus errors) with
+non-Device MMIO mappings. Unlike DMA coherency, there's no way to check
+for this at runtime. Therefore, in the absence of better chipset info,
+disable WC iomaps by default.
+
+Signed-off-by: Mario Bălănică <mariobalanica02@gmail.com>
+---
+ src/nvidia/arch/nvalloc/common/inc/nvcst.h    |  8 +++----
+ .../kernel/platform/chipset/chipset_info.c    | 21 +++++++++++++++++++
+ 2 files changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/src/nvidia/arch/nvalloc/common/inc/nvcst.h b/src/nvidia/arch/nvalloc/common/inc/nvcst.h
+index 33bb8d4959..feb0f72693 100644
+--- a/src/nvidia/arch/nvalloc/common/inc/nvcst.h
++++ b/src/nvidia/arch/nvalloc/common/inc/nvcst.h
+@@ -97,7 +97,7 @@ CHIPSET_SETUP_FUNC(PLDA_XpressRichAXI_setupFunc)
+ CHIPSET_SETUP_FUNC(Riscv_generic_setupFunc)
+ CHIPSET_SETUP_FUNC(Intel_A70D_setupFunc)
+ CHIPSET_SETUP_FUNC(AMD_14D8_setupFunc)
+-
++CHIPSET_SETUP_FUNC(Generic_setupFunc)
+ 
+ // Keep string length <=32 (including termination) to avoid string copy overflow
+ CSINFO chipsetInfo[] =
+@@ -276,8 +276,8 @@ CSINFO chipsetInfo[] =
+     {PCI_VENDOR_ID_AMPERE,      0xE110, CS_AMPERE_ALTRA, "Ampere Altra", Ampere_Altra_setupFunc},
+     {PCI_VENDOR_ID_ARM,         0x0100, CS_ARM_NEOVERSEN1, "Arm Neoverse N1",  Arm_NeoverseN1_setupFunc},
+     {PCI_VENDOR_ID_HYGON,       0x790E, CS_HYGON_C86,      "Hygon-C86-7151",   NULL},
+-    {PCI_VENDOR_ID_MARVELL,     0xA02D, CS_MARVELL_OCTEON_CN96XX, "Marvell Octeon CN96xx", ARMV8_generic_setupFunc},
+-    {PCI_VENDOR_ID_MARVELL,     0xA02D, CS_MARVELL_OCTEON_CN98XX, "Marvell Octeon CN98xx", ARMV8_generic_setupFunc},
++    {PCI_VENDOR_ID_MARVELL,     0xA02D, CS_MARVELL_OCTEON_CN96XX, "Marvell Octeon CN96xx", NULL},
++    {PCI_VENDOR_ID_MARVELL,     0xA02D, CS_MARVELL_OCTEON_CN98XX, "Marvell Octeon CN98xx", NULL},
+     {PCI_VENDOR_ID_SIFIVE,      0x0000, CS_SIFIVE_FU740_C000, "SiFive FU740-000", Riscv_generic_setupFunc},
+     {PCI_VENDOR_ID_PLDA,        0x1111, CS_PLDA_XPRESSRICH_AXI_REF, "XpressRich-AXI Ref Design", PLDA_XpressRichAXI_setupFunc},
+     {PCI_VENDOR_ID_AMPERE,      0xE200, CS_AMPERE_AMPEREONE160, "Ampere AmpereOne-160", Ampere_AmpereOne_setupFunc},
+@@ -302,7 +302,7 @@ CSINFO chipsetInfo[] =
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+     // last element must have chipset CS_UNKNOWN (zero)
+-    {0,                         0,      CS_UNKNOWN,         "Unknown",      NULL}
++    {0,                         0,      CS_UNKNOWN,         "Unknown",      Generic_setupFunc}
+ };
+ 
+ 
+diff --git a/src/nvidia/src/kernel/platform/chipset/chipset_info.c b/src/nvidia/src/kernel/platform/chipset/chipset_info.c
+index 9e546e62e2..10c82088d0 100644
+--- a/src/nvidia/src/kernel/platform/chipset/chipset_info.c
++++ b/src/nvidia/src/kernel/platform/chipset/chipset_info.c
+@@ -1179,6 +1179,14 @@ ARMV8_generic_setupFunc
+     OBJCL *pCl
+ )
+ {
++    //
++    // Arm platforms have historically had issues (corruption, bus errors) with
++    // non-Device MMIO mappings. Unlike DMA coherency, there's no way to check
++    // for this at runtime. Therefore, in the absence of better chipset info,
++    // disable WC iomaps by default.
++    //
++    pCl->setProperty(pCl, PDB_PROP_CL_DISABLE_IOMAP_WC, NV_TRUE);
++
+     return NV_OK;
+ }
+ 
+@@ -1351,6 +1359,19 @@ Ampere_AmpereOne_setupFunc
+     return NV_OK;
+ }
+ 
++// Generic setup function
++static NV_STATUS
++Generic_setupFunc
++(
++    OBJCL *pCl
++)
++{
++#if NVCPU_IS_FAMILY_ARM
++    return ARMV8_generic_setupFunc(pCl);
++#endif
++    return NV_OK;
++}
++
+ void
+ csGetInfoStrings
+ (
+
+From 9861907db5ee333e74fa31153d7269ca7028f2c0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mario=20B=C4=83l=C4=83nic=C4=83?=
+ <mariobalanica02@gmail.com>
+Date: Wed, 19 Nov 2025 15:00:55 -0500
+Subject: [PATCH 3/5] Never skip cache flushing on dma_map_*() calls
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Do not set the `DMA_ATTR_SKIP_CPU_SYNC` flag on dma_map_*() calls even
+for memory marked as "uncached".
+
+On Arm, we always allocate cacheable pages and then use aliased (vmap)
+uncached mappings when necessary. Without explicit flushing right after
+allocation, previous stale data in these backing pages could be evicted
+at any point and end up clobbering memory that was already written
+through the aliased mapping. Note that no flushing will be performed on
+cache-coherent hardware.
+
+This is not an issue in the unmap path since no further writes are made
+to the cached mappings.
+
+Signed-off-by: Mario Bălănică <mariobalanica02@gmail.com>
+---
+ kernel-open/nvidia/nv-dma.c | 24 +++++++++++++++++-------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/kernel-open/nvidia/nv-dma.c b/kernel-open/nvidia/nv-dma.c
+index 6530fb152b..00545e416f 100644
+--- a/kernel-open/nvidia/nv-dma.c
++++ b/kernel-open/nvidia/nv-dma.c
+@@ -61,11 +61,18 @@ static NV_STATUS nv_dma_map_contig(
+     NvU64 *va
+ )
+ {
+-    *va = dma_map_page_attrs(dma_map->dev, dma_map->pages[0], 0,
++    /*
++     * Do not set DMA_ATTR_SKIP_CPU_SYNC here even if memory is "uncached".
++     * On Arm, we always allocate cacheable pages and then use aliased (vmap)
++     * uncached mappings when necessary. Without explicit flushing right after
++     * allocation, previous stale data in these backing pages could be evicted
++     * at any point and end up clobbering memory that was already written
++     * through the aliased mapping. Note that no flushing will be performed on
++     * cache-coherent hardware.
++     */
++    *va = dma_map_page(dma_map->dev, dma_map->pages[0], 0,
+                              dma_map->page_count * PAGE_SIZE,
+-                             DMA_BIDIRECTIONAL,
+-                             (dma_map->cache_type == NV_MEMORY_UNCACHED) ?
+-                              DMA_ATTR_SKIP_CPU_SYNC : 0);
++                             DMA_BIDIRECTIONAL);
+     if (dma_mapping_error(dma_map->dev, *va))
+     {
+         return NV_ERR_OPERATING_SYSTEM;
+@@ -93,7 +100,7 @@ static void nv_dma_unmap_contig(nv_dma_map_t *dma_map)
+     dma_unmap_page_attrs(dma_map->dev, dma_map->mapping.contig.dma_addr,
+                          dma_map->page_count * PAGE_SIZE,
+                          DMA_BIDIRECTIONAL,
+-                         (dma_map->cache_type == NV_MEMORY_UNCACHED) ?
++                         (dma_map->cache_type != NV_MEMORY_CACHED) ?
+                           DMA_ATTR_SKIP_CPU_SYNC : 0);
+ }
+ 
+@@ -214,6 +221,7 @@ NV_STATUS nv_map_dma_map_scatterlist(nv_dma_map_t *dma_map)
+     nv_dma_submap_t *submap;
+     NvU64 i;
+ 
++    /* See the comment in nv_dma_map_contig() */
+     NV_FOR_EACH_DMA_SUBMAP(dma_map, submap, i)
+     {
+         /* Imported SGTs will have already been mapped by the exporter. */
+@@ -256,9 +264,11 @@ void nv_unmap_dma_map_scatterlist(nv_dma_map_t *dma_map)
+             continue;
+         }
+ 
+-        dma_unmap_sg(dma_map->dev, submap->sgt.sgl,
++        dma_unmap_sg_attrs(dma_map->dev, submap->sgt.sgl,
+                 submap->sgt.orig_nents,
+-                DMA_BIDIRECTIONAL);
++                DMA_BIDIRECTIONAL,
++                (dma_map->cache_type != NV_MEMORY_CACHED) ?
++                 DMA_ATTR_SKIP_CPU_SYNC : 0);
+     }
+ }
+ 
+
+From 492cb5275fb49e8c7b9c044f0e313808a68c7655 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mario=20B=C4=83l=C4=83nic=C4=83?=
+ <mariobalanica02@gmail.com>
+Date: Wed, 19 Nov 2025 15:01:06 -0500
+Subject: [PATCH 4/5] Rework DMA cache maintenance helper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Support both CPU-side flushing (to device) and invalidation (from
+device) for cached memory descriptors.
+
+The previous logic was entirely broken:
+- `dma_sync_*_for_device()` in `nv_dma_cache_invalidate()` actually
+performed flushing (cleaning) rather than invalidation, since the
+direction argument is ignored on ARM64. The correct API variant for
+invalidation is `dma_sync_*_for_cpu()`.
+
+- `flush_cache_all()` was removed a long time ago from the ARM64 kernel
+because there's no reliable way to flush all cache lines on this arch.
+
+This notably fixes `cliresCtrlCmdOsUnixFlushUserCache_IMPL()` and will
+also be needed in other places where cached memory is used. However,
+paths calling `memdescMapInternal/memdescUnmapInternal()` in streaming
+DMA fashion should be fine as these functions now properly handle
+synchronization.
+
+Signed-off-by: Mario Bălănică <mariobalanica02@gmail.com>
+---
+ kernel-open/common/inc/nv.h                   |   6 +-
+ kernel-open/common/inc/os-interface.h         |   2 -
+ kernel-open/conftest.sh                       |  16 ---
+ kernel-open/nvidia/nv-dma.c                   |  37 ++++--
+ kernel-open/nvidia/nvidia.Kbuild              |   1 -
+ kernel-open/nvidia/os-interface.c             |  51 ---------
+ src/nvidia/arch/nvalloc/unix/include/nv.h     |   6 +-
+ .../arch/nvalloc/unix/include/os-interface.h  |   2 -
+ src/nvidia/arch/nvalloc/unix/src/os.c         | 108 +++++++++---------
+ src/nvidia/generated/g_mem_desc_nvoc.h        |   1 -
+ src/nvidia/generated/g_os_nvoc.h              |   9 +-
+ .../gpu/bus/arch/maxwell/kern_bus_gm107.c     |   4 +-
+ .../gpu/bus/arch/turing/kern_bus_tu102.c      |   2 +-
+ src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c  |  28 +----
+ .../kernel/gpu/spdm/arch/hopper/spdm_gh100.c  |   2 +-
+ 15 files changed, 105 insertions(+), 170 deletions(-)
+
+diff --git a/kernel-open/common/inc/nv.h b/kernel-open/common/inc/nv.h
+index fef7881821..c2b7aa9434 100644
+--- a/kernel-open/common/inc/nv.h
++++ b/kernel-open/common/inc/nv.h
+@@ -864,6 +864,9 @@ static inline NvBool IS_IMEM_OFFSET(nv_state_t *nv, NvU64 offset, NvU64 length)
+ #define NV_ALIGN_DOWN(v,g) ((v) & ~((g) - 1))
+ #endif
+ 
++#define NV_OS_DMA_SYNC_TO_DEVICE       NVBIT(0)                                                // CPU flush
++#define NV_OS_DMA_SYNC_FROM_DEVICE     NVBIT(1)                                                // CPU invalidate
++#define NV_OS_DMA_SYNC_TO_FROM_DEVICE  (NV_OS_DMA_SYNC_TO_DEVICE | NV_OS_DMA_SYNC_FROM_DEVICE) // CPU flush + invalidate
+ 
+ /*
+  * driver internal interfaces
+@@ -921,7 +924,8 @@ void       NV_API_CALL  nv_dma_unmap_peer        (nv_dma_device_t *, NvU64, NvU6
+ NV_STATUS  NV_API_CALL  nv_dma_map_mmio          (nv_dma_device_t *, NvU64, NvU64 *);
+ void       NV_API_CALL  nv_dma_unmap_mmio        (nv_dma_device_t *, NvU64, NvU64);
+ 
+-void       NV_API_CALL  nv_dma_cache_invalidate  (nv_dma_device_t *, void *);
++void       NV_API_CALL  nv_dma_sync              (nv_dma_device_t *, void *, NvU32);
++
+ NvBool     NV_API_CALL  nv_grdma_pci_topology_supported(nv_state_t *, nv_dma_device_t *);
+ 
+ NvBool     NV_API_CALL  nv_dev_is_dma_coherent   (nv_dma_device_t *);
+diff --git a/kernel-open/common/inc/os-interface.h b/kernel-open/common/inc/os-interface.h
+index 523368eaa4..03a6cb89bd 100644
+--- a/kernel-open/common/inc/os-interface.h
++++ b/kernel-open/common/inc/os-interface.h
+@@ -109,8 +109,6 @@ void        NV_API_CALL  os_unmap_kernel_space            (void *, NvU64);
+ void*       NV_API_CALL  os_map_user_space                (MemoryArea *, NvU32, NvU32, void **);
+ void        NV_API_CALL  os_unmap_user_space              (void *, NvU64, void *);
+ #endif
+-NV_STATUS   NV_API_CALL  os_flush_cpu_cache_all           (void);
+-NV_STATUS   NV_API_CALL  os_flush_user_cache              (void);
+ void        NV_API_CALL  os_flush_cpu_write_combine_buffer(void);
+ NvU8        NV_API_CALL  os_io_read_byte                  (NvU32);
+ NvU16       NV_API_CALL  os_io_read_word                  (NvU32);
+diff --git a/kernel-open/conftest.sh b/kernel-open/conftest.sh
+index 99de2649de..c5c5f27d5b 100755
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -625,22 +625,6 @@ compile_test() {
+             compile_check_conftest "$CODE" "NV_SET_PAGES_ARRAY_UC_PRESENT" "" "functions"
+         ;;
+ 
+-        flush_cache_all)
+-            #
+-            # Determine if flush_cache_all() function is present
+-            #
+-            # flush_cache_all() was removed by commit id
+-            # 68234df4ea79 ("arm64: kill flush_cache_all()") in 4.2 (2015-04-20)
+-            # for aarch64
+-            #
+-            CODE="
+-            #include <asm/cacheflush.h>
+-            int conftest_flush_cache_all(void) {
+-                return flush_cache_all();
+-            }"
+-            compile_check_conftest "$CODE" "NV_FLUSH_CACHE_ALL_PRESENT" "" "functions"
+-        ;;
+-
+         ioremap_cache)
+             #
+             # Determine if the ioremap_cache() function is present.
+diff --git a/kernel-open/nvidia/nv-dma.c b/kernel-open/nvidia/nv-dma.c
+index 00545e416f..879cf4a36d 100644
+--- a/kernel-open/nvidia/nv-dma.c
++++ b/kernel-open/nvidia/nv-dma.c
+@@ -880,17 +880,18 @@ void NV_API_CALL nv_dma_unmap_mmio
+ }
+ 
+ /*
+- * Invalidate DMA mapping in CPU caches by "syncing" to the device.
++ * Flush/invalidate DMA mapping in CPU caches by "syncing" to the device.
+  *
+  * This is only implemented for ARM platforms, since other supported
+  * platforms are cache coherent and have not required this (we
+  * explicitly haven't supported SWIOTLB bounce buffering either where
+  * this would be needed).
+  */
+-void NV_API_CALL nv_dma_cache_invalidate
++void NV_API_CALL nv_dma_sync
+ (
+     nv_dma_device_t *dma_dev,
+-    void *priv
++    void *priv,
++    NvU32 dir
+ )
+ {
+ #if defined(NVCPU_AARCH64)
+@@ -898,10 +899,17 @@ void NV_API_CALL nv_dma_cache_invalidate
+ 
+     if (dma_map->contiguous)
+     {
+-        dma_sync_single_for_device(dma_dev->dev,
+-                                   dma_map->mapping.contig.dma_addr,
+-                                   (size_t) PAGE_SIZE * dma_map->page_count,
+-                                   DMA_FROM_DEVICE);
++        if (dir & NV_OS_DMA_SYNC_TO_DEVICE)
++            dma_sync_single_for_device(dma_dev->dev,
++                                       dma_map->mapping.contig.dma_addr,
++                                       (size_t)PAGE_SIZE * dma_map->page_count,
++                                       DMA_TO_DEVICE);
++
++        if (dir & NV_OS_DMA_SYNC_FROM_DEVICE)
++            dma_sync_single_for_cpu(dma_dev->dev,
++                                    dma_map->mapping.contig.dma_addr,
++                                    (size_t)PAGE_SIZE * dma_map->page_count,
++                                    DMA_FROM_DEVICE);
+     }
+     else
+     {
+@@ -910,10 +918,17 @@ void NV_API_CALL nv_dma_cache_invalidate
+ 
+         NV_FOR_EACH_DMA_SUBMAP(dma_map, submap, i)
+         {
+-            dma_sync_sg_for_device(dma_dev->dev,
+-                                   submap->sgt.sgl,
+-                                   submap->sgt.orig_nents,
+-                                   DMA_FROM_DEVICE);
++            if (dir & NV_OS_DMA_SYNC_TO_DEVICE)
++                dma_sync_sg_for_device(dma_dev->dev,
++                                       submap->sgt.sgl,
++                                       submap->sgt.orig_nents,
++                                       DMA_TO_DEVICE);
++
++            if (dir & NV_OS_DMA_SYNC_FROM_DEVICE)
++                dma_sync_sg_for_cpu(dma_dev->dev,
++                                    submap->sgt.sgl,
++                                    submap->sgt.orig_nents,
++                                    DMA_FROM_DEVICE);
+         }
+     }
+ #endif
+diff --git a/kernel-open/nvidia/nvidia.Kbuild b/kernel-open/nvidia/nvidia.Kbuild
+index 1c08a59b2c..fd0e40dc8b 100644
+--- a/kernel-open/nvidia/nvidia.Kbuild
++++ b/kernel-open/nvidia/nvidia.Kbuild
+@@ -126,7 +126,6 @@ NV_CONFTEST_FUNCTION_COMPILE_TESTS += pci_rebar_get_possible_sizes
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += get_backlight_device_by_name
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += dma_direct_map_resource
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += dev_is_dma_coherent
+-NV_CONFTEST_FUNCTION_COMPILE_TESTS += flush_cache_all
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += vmf_insert_pfn
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += jiffies_to_timespec
+ NV_CONFTEST_FUNCTION_COMPILE_TESTS += ktime_get_raw_ts64
+diff --git a/kernel-open/nvidia/os-interface.c b/kernel-open/nvidia/os-interface.c
+index a03a3b88cf..1d4a29cd06 100644
+--- a/kernel-open/nvidia/os-interface.c
++++ b/kernel-open/nvidia/os-interface.c
+@@ -1034,57 +1034,6 @@ void NV_API_CALL os_unmap_kernel_space(
+     nv_iounmap(addr, size_bytes);
+ }
+ 
+-#if NVCPU_IS_AARCH64
+-
+-static inline void nv_flush_cache_cpu(void *info)
+-{
+-    if (!nvos_is_chipset_io_coherent())
+-    {
+-#if defined(NV_FLUSH_CACHE_ALL_PRESENT)
+-        flush_cache_all();
+-#else
+-        WARN_ONCE(0, "kernel does not provide flush_cache_all()\n");
+-#endif
+-    }
+-}
+-
+-// flush the cache of all cpus
+-NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void)
+-{
+-    on_each_cpu(nv_flush_cache_cpu, NULL, 1);
+-    return NV_OK;
+-}
+-
+-NV_STATUS NV_API_CALL os_flush_user_cache(void)
+-{
+-    if (!NV_MAY_SLEEP())
+-    {
+-        return NV_ERR_NOT_SUPPORTED;
+-    }
+-
+-    //
+-    // The Linux kernel does not export an interface for flushing a range,
+-    // although it is possible. For now, just flush the entire cache to be
+-    // safe.
+-    //
+-    on_each_cpu(nv_flush_cache_cpu, NULL, 1);
+-    return NV_OK;
+-}
+-
+-#else // NVCPU_IS_AARCH64
+-
+-NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void)
+-{
+-    return NV_ERR_NOT_SUPPORTED;
+-}
+-
+-NV_STATUS NV_API_CALL os_flush_user_cache(void)
+-{
+-    return NV_ERR_NOT_SUPPORTED;
+-}
+-
+-#endif
+-
+ void NV_API_CALL os_flush_cpu_write_combine_buffer(void)
+ {
+ #if defined(NVCPU_X86_64)
+diff --git a/src/nvidia/arch/nvalloc/unix/include/nv.h b/src/nvidia/arch/nvalloc/unix/include/nv.h
+index 4ca3f0ccf6..493c5afb13 100644
+--- a/src/nvidia/arch/nvalloc/unix/include/nv.h
++++ b/src/nvidia/arch/nvalloc/unix/include/nv.h
+@@ -864,6 +864,9 @@ static inline NvBool IS_IMEM_OFFSET(nv_state_t *nv, NvU64 offset, NvU64 length)
+ #define NV_ALIGN_DOWN(v,g) ((v) & ~((g) - 1))
+ #endif
+ 
++#define NV_OS_DMA_SYNC_TO_DEVICE       NVBIT(0)                                                // CPU flush
++#define NV_OS_DMA_SYNC_FROM_DEVICE     NVBIT(1)                                                // CPU invalidate
++#define NV_OS_DMA_SYNC_TO_FROM_DEVICE  (NV_OS_DMA_SYNC_TO_DEVICE | NV_OS_DMA_SYNC_FROM_DEVICE) // CPU flush + invalidate
+ 
+ /*
+  * driver internal interfaces
+@@ -921,7 +924,8 @@ void       NV_API_CALL  nv_dma_unmap_peer        (nv_dma_device_t *, NvU64, NvU6
+ NV_STATUS  NV_API_CALL  nv_dma_map_mmio          (nv_dma_device_t *, NvU64, NvU64 *);
+ void       NV_API_CALL  nv_dma_unmap_mmio        (nv_dma_device_t *, NvU64, NvU64);
+ 
+-void       NV_API_CALL  nv_dma_cache_invalidate  (nv_dma_device_t *, void *);
++void       NV_API_CALL  nv_dma_sync              (nv_dma_device_t *, void *, NvU32);
++
+ NvBool     NV_API_CALL  nv_grdma_pci_topology_supported(nv_state_t *, nv_dma_device_t *);
+ 
+ NvBool     NV_API_CALL  nv_dev_is_dma_coherent   (nv_dma_device_t *);
+diff --git a/src/nvidia/arch/nvalloc/unix/include/os-interface.h b/src/nvidia/arch/nvalloc/unix/include/os-interface.h
+index 6eb9559640..7fdb7be705 100644
+--- a/src/nvidia/arch/nvalloc/unix/include/os-interface.h
++++ b/src/nvidia/arch/nvalloc/unix/include/os-interface.h
+@@ -105,8 +105,6 @@ NvBool      NV_API_CALL  os_pci_remove_supported          (void);
+ void        NV_API_CALL  os_pci_remove                    (void *);
+ void*       NV_API_CALL  os_map_kernel_space              (NvU64, NvU64, NvU32);
+ void        NV_API_CALL  os_unmap_kernel_space            (void *, NvU64);
+-NV_STATUS   NV_API_CALL  os_flush_cpu_cache_all           (void);
+-NV_STATUS   NV_API_CALL  os_flush_user_cache              (void);
+ void        NV_API_CALL  os_flush_cpu_write_combine_buffer(void);
+ NvU8        NV_API_CALL  os_io_read_byte                  (NvU32);
+ NvU16       NV_API_CALL  os_io_read_word                  (NvU32);
+diff --git a/src/nvidia/arch/nvalloc/unix/src/os.c b/src/nvidia/arch/nvalloc/unix/src/os.c
+index 1dd6e6c150..b3a4edab68 100644
+--- a/src/nvidia/arch/nvalloc/unix/src/os.c
++++ b/src/nvidia/arch/nvalloc/unix/src/os.c
+@@ -1665,9 +1665,53 @@ NV_STATUS osUserHandleToKernelPtr(NvHandle hClient, NvP64 hEvent, NvP64 *pEvent)
+     return result;
+ }
+ 
+-NV_STATUS osFlushCpuCache(void)
++ct_assert(OS_DMA_SYNC_TO_DEVICE == NV_OS_DMA_SYNC_TO_DEVICE);
++ct_assert(OS_DMA_SYNC_FROM_DEVICE == NV_OS_DMA_SYNC_FROM_DEVICE);
++ct_assert(OS_DMA_SYNC_TO_FROM_DEVICE == NV_OS_DMA_SYNC_TO_FROM_DEVICE);
++
++NV_STATUS osDmaSyncMem
++(
++    MEMORY_DESCRIPTOR *pMemDesc,
++    NvU32 dir
++)
+ {
+-    return os_flush_cpu_cache_all();
++    OBJGPU *pGpu = pMemDesc->pGpu;
++    KernelBif *pKernelBif = GPU_GET_KERNEL_BIF(pGpu);
++
++    if ((pKernelBif == NULL)                     ||
++        kbifIsSnoopDmaCapable(pGpu, pKernelBif)  ||
++        (memdescGetCpuCacheAttrib(pMemDesc) != NV_MEMORY_CACHED))
++    {
++        return NV_OK;
++    }
++
++    nv_state_t *nv = NV_GET_NV_STATE(pGpu);
++    if (nv->iovaspace_id == NV_IOVA_DOMAIN_NONE)
++    {
++        return NV_ERR_INVALID_ARGUMENT;
++    }
++
++    PIOVAMAPPING pIovaMapping = memdescGetIommuMap(pMemDesc, nv->iovaspace_id);
++    //
++    // This should only be called for devices that map memory descriptors
++    // through the nv-dma library, where the memory descriptor data
++    // contains all the kernel-specific context we need for the
++    // cache maintenance.
++    //
++    // (These checks match those in osIovaUnmap() leading up to
++    // nv_dma_unmap_alloc()).
++    //
++    if (pIovaMapping == NULL ||
++        pIovaMapping->pOsData == NULL ||
++        memdescGetFlag(pIovaMapping->pPhysMemDesc, MEMDESC_FLAGS_GUEST_ALLOCATED) ||
++        memdescGetFlag(pIovaMapping->pPhysMemDesc, MEMDESC_FLAGS_PEER_IO_MEM))
++    {
++        return NV_ERR_INVALID_ARGUMENT;
++    }
++
++    nv_dma_sync(nv->dma_dev, pIovaMapping->pOsData, dir);
++
++    return NV_OK;
+ }
+ 
+ void osFlushCpuWriteCombineBuffer(void)
+@@ -2073,7 +2117,7 @@ cliresCtrlCmdOsUnixFlushUserCache_IMPL
+     Memory *pMemory;
+     MEMORY_DESCRIPTOR *pMemDesc;
+     NvU64 start, end;
+-    NvBool bInvalidateOnly;
++    NvU32 syncDir;
+ 
+     NV_CHECK_OK_OR_RETURN(LEVEL_SILENT,
+         memGetByHandle(RES_GET_CLIENT(pRmCliRes),
+@@ -2101,13 +2145,16 @@ cliresCtrlCmdOsUnixFlushUserCache_IMPL
+ 
+     switch(pAddressSpaceParams->cacheOps)
+     {
+-        case NV0000_CTRL_OS_UNIX_FLAGS_USER_CACHE_FLUSH_INVALIDATE:
+         case NV0000_CTRL_OS_UNIX_FLAGS_USER_CACHE_FLUSH:
+-            bInvalidateOnly = NV_FALSE;
++            syncDir = OS_DMA_SYNC_TO_DEVICE;
+             break;
+ 
+         case NV0000_CTRL_OS_UNIX_FLAGS_USER_CACHE_INVALIDATE:
+-            bInvalidateOnly = NV_TRUE;
++            syncDir = OS_DMA_SYNC_FROM_DEVICE;
++            break;
++
++        case NV0000_CTRL_OS_UNIX_FLAGS_USER_CACHE_FLUSH_INVALIDATE:
++            syncDir = OS_DMA_SYNC_TO_FROM_DEVICE;
+             break;
+ 
+         default:
+@@ -2123,54 +2170,7 @@ cliresCtrlCmdOsUnixFlushUserCache_IMPL
+         return NV_ERR_INVALID_LIMIT;
+     }
+ 
+-    if (bInvalidateOnly)
+-    {
+-        //
+-        // XXX: this seems fishy - I'm not sure if invalidating by the kernel
+-        // VA only as nv_dma_cache_invalidate() does here is sufficient for
+-        // this control call.
+-        // pAddressSpaceParams->internalOnly is expected to be the RM client
+-        // VA for this control call; if we wanted to invalidate the user VA we
+-        // could do so using that.
+-        //
+-        // For I/O coherent platforms this won't actually do anything.
+-        // On non-I/O-coherent platforms, there's no need to do a second
+-        // invalidation after the full flush.
+-        //
+-        nv_state_t *nv = NV_GET_NV_STATE(pMemDesc->pGpu);
+-        if (nv->iovaspace_id != NV_IOVA_DOMAIN_NONE)
+-        {
+-            PIOVAMAPPING pIovaMapping = memdescGetIommuMap(pMemDesc, nv->iovaspace_id);
+-            //
+-            // This should only be called for devices that map memory descriptors
+-            // through the nv-dma library, where the memory descriptor data
+-            // contains all the kernel-specific context we need for the
+-            // invalidation.
+-            //
+-            // (These checks match those in osIovaUnmap() leading up to
+-            // nv_dma_unmap_alloc()).
+-            //
+-            if (pIovaMapping == NULL ||
+-                pIovaMapping->pOsData == NULL ||
+-                memdescGetFlag(pIovaMapping->pPhysMemDesc, MEMDESC_FLAGS_GUEST_ALLOCATED) ||
+-                memdescGetFlag(pIovaMapping->pPhysMemDesc, MEMDESC_FLAGS_PEER_IO_MEM))
+-            {
+-                return NV_ERR_INVALID_ARGUMENT;
+-            }
+-
+-            nv_dma_cache_invalidate(nv->dma_dev, pIovaMapping->pOsData);
+-        }
+-        else
+-        {
+-            return NV_ERR_INVALID_ARGUMENT;
+-        }
+-    }
+-    else
+-    {
+-        return os_flush_user_cache();
+-    }
+-
+-    return NV_OK;
++    return osDmaSyncMem(pMemDesc, syncDir);
+ }
+ 
+ static NV_STATUS
+diff --git a/src/nvidia/generated/g_mem_desc_nvoc.h b/src/nvidia/generated/g_mem_desc_nvoc.h
+index 0eb04d518e..cf67fa3c61 100644
+--- a/src/nvidia/generated/g_mem_desc_nvoc.h
++++ b/src/nvidia/generated/g_mem_desc_nvoc.h
+@@ -1511,7 +1511,6 @@ NV_STATUS memdescSendMemDescToGSP(OBJGPU *pGpu, MEMORY_DESCRIPTOR *pMemDesc, NvH
+ 
+ // cache maintenance functions
+ void memdescFlushGpuCaches(OBJGPU *pGpu, MEMORY_DESCRIPTOR *pMemDesc);
+-void memdescFlushCpuCaches(OBJGPU *pGpu, MEMORY_DESCRIPTOR *pMemDesc);
+ 
+ // Map memory descriptor for RM internal access
+ void* memdescMapInternal(OBJGPU *pGpu, MEMORY_DESCRIPTOR *pMemDesc, NvU32 flags);
+diff --git a/src/nvidia/generated/g_os_nvoc.h b/src/nvidia/generated/g_os_nvoc.h
+index 58e4631c20..f94dc0f3d2 100644
+--- a/src/nvidia/generated/g_os_nvoc.h
++++ b/src/nvidia/generated/g_os_nvoc.h
+@@ -649,12 +649,10 @@ NV_STATUS __nvoc_objCreate_OBJOS(OBJOS**, Dynamic*, NvU32);
+ NV_STATUS       addProbe(OBJGPU *, NvU32);
+ 
+ 
+-typedef NV_STATUS  OSFlushCpuCache(void);
+ 
+ typedef void       OSAddRecordForCrashLog(void *, NvU32);
+ typedef void       OSDeleteRecordForCrashLog(void *);
+ 
+-OSFlushCpuCache                  osFlushCpuCache;
+ OSAddRecordForCrashLog           osAddRecordForCrashLog;
+ OSDeleteRecordForCrashLog        osDeleteRecordForCrashLog;
+ 
+@@ -794,6 +792,13 @@ NV_STATUS rm_is_vgpu_supported_device(OS_GPU_INFO *pNv, NvU32 pmc_boot_1,
+ NV_STATUS osLockPageableDataSection(RM_PAGEABLE_SECTION   *pSection);
+ NV_STATUS osUnlockPageableDataSection(RM_PAGEABLE_SECTION   *pSection);
+ 
++#define OS_DMA_SYNC_TO_DEVICE       NVBIT(0)                                          // CPU flush
++#define OS_DMA_SYNC_FROM_DEVICE     NVBIT(1)                                          // CPU invalidate
++#define OS_DMA_SYNC_TO_FROM_DEVICE  (OS_DMA_SYNC_TO_DEVICE | OS_DMA_SYNC_FROM_DEVICE) // CPU flush + invalidate
++
++NV_STATUS osDmaSyncMem(MEMORY_DESCRIPTOR *pMemDesc,
++                       NvU32 dir);
++
+ void osFlushGpuCoherentCpuCacheRange(OS_GPU_INFO *pOsGpuInfo,
+                                      NvU64 cpuVirtual,
+                                      NvU64 size);
+diff --git a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c
+index d1e49249ef..7b2def3bb1 100644
+--- a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c
+@@ -2954,7 +2954,7 @@ _kbusInternalBar1Unmap
+     mapRemove(&pVaInfo->reverseMap, ppVaToType);
+ 
+     // TODO: investigate whether the tegra wbinvd flush is really necessary, seems only useful for SYSMEM_COH
+-    memdescFlushCpuCaches(pGpu, pType->pMemDesc);
++    osDmaSyncMem(pType->pMemDesc, OS_DMA_SYNC_TO_DEVICE);
+ 
+     dmaFreeMapping_HAL(pGpu, pDma, pVAS, virtRange.start, pType->pMemDesc, 0, NULL);
+ }
+@@ -3263,7 +3263,7 @@ kbusUnmapFbAperture_GM107
+         OBJVASPACE       *pVAS = pBar1VaInfo->pVAS;
+ 
+         // TODO: investigate whether the tegra wbinvd flush is really necessary, seems only useful for SYSMEM_COH
+-        memdescFlushCpuCaches(pGpu, pMemDesc);
++        osDmaSyncMem(pMemDesc, OS_DMA_SYNC_TO_DEVICE);
+         dmaFreeMapping_HAL(pGpu, pDma, pVAS, memArea.pRanges[0].start, pMemDesc, 0, NULL);
+ 
+         goto done;
+diff --git a/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c b/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c
+index ce3346e1ef..2d82d28249 100644
+--- a/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c
+@@ -939,7 +939,7 @@ NV_STATUS kbusDecreaseStaticBar1Refcount_TU102
+                         NV_ERR_INVALID_STATE);
+ 
+     // TODO: investigate whether the tegra wbinvd flush is really necessary, seems only useful for SYSMEM_COH
+-    memdescFlushCpuCaches(pGpu, pMemDesc);
++    osDmaSyncMem(pMemDesc, OS_DMA_SYNC_TO_DEVICE);
+ 
+     pRootMemDesc = memdescGetRootMemDesc(pMemDesc, NULL);
+ 
+diff --git a/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c b/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c
+index a2a01ff0e7..e771ec9429 100644
+--- a/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c
++++ b/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c
+@@ -2107,29 +2107,6 @@ memdescFlushGpuCaches
+     }
+ }
+ 
+-void
+-memdescFlushCpuCaches
+-(
+-    OBJGPU            *pGpu,
+-    MEMORY_DESCRIPTOR *pMemDesc
+-)
+-{
+-    // Flush WC to get the data written to this mapping out to memory
+-    osFlushCpuWriteCombineBuffer();
+-
+-    KernelBif *pKernelBif = GPU_GET_KERNEL_BIF(pGpu);
+-
+-    // Special care is needed on SOC, where the GPU cannot snoop the CPU L2
+-    if ((pKernelBif != NULL)                     &&
+-        !kbifIsSnoopDmaCapable(pGpu, pKernelBif) &&
+-        (memdescGetCpuCacheAttrib(pMemDesc) == NV_MEMORY_CACHED))
+-    {
+-        // Flush CPU L2 so that the GPU will see any changes the CPU made
+-        osFlushCpuCache();
+-    }
+-}
+-
+-
+ /*
+  * @brief map memory descriptor for internal access
+  *
+@@ -2158,7 +2135,10 @@ memdescMapInternal
+     // We need to flush & invalidate GPU L2 cache only for directed BAR mappings.
+     // Reflected BAR mappings will access memory via GPU, and hence go through GPU L2 cache.
+     if (mapType == MEMDESC_MAP_INTERNAL_TYPE_SYSMEM_DIRECT)
++    {
+         memdescFlushGpuCaches(pGpu, pMemDesc);
++        osDmaSyncMem(pMemDesc, OS_DMA_SYNC_FROM_DEVICE);
++    }
+ 
+     if (pMemDesc->_pInternalMapping != NULL)
+     {
+@@ -2234,7 +2214,7 @@ void memdescUnmapInternal
+ 
+     if (mapType == MEMDESC_MAP_INTERNAL_TYPE_SYSMEM_DIRECT || mapType == MEMDESC_MAP_INTERNAL_TYPE_BAR2)
+     {
+-        memdescFlushCpuCaches(pGpu, pMemDesc);
++        osDmaSyncMem(pMemDesc, OS_DMA_SYNC_TO_DEVICE);
+     }
+ 
+     if (--pMemDesc->_internalMappingRefCount == 0)
+diff --git a/src/nvidia/src/kernel/gpu/spdm/arch/hopper/spdm_gh100.c b/src/nvidia/src/kernel/gpu/spdm/arch/hopper/spdm_gh100.c
+index af0e35761f..f057c37558 100644
+--- a/src/nvidia/src/kernel/gpu/spdm/arch/hopper/spdm_gh100.c
++++ b/src/nvidia/src/kernel/gpu/spdm/arch/hopper/spdm_gh100.c
+@@ -848,7 +848,7 @@ spdmMessageProcess_GH100
+ 
+         // First copy payload to shared buffer
+         portMemCopy(pPayloadBuffer, requestSize, pRequest, requestSize);
+-        memdescFlushCpuCaches(pGpu, pSpdm->pPayloadBufferMemDesc);
++        osDmaSyncMem(pSpdm->pPayloadBufferMemDesc, OS_DMA_SYNC_TO_DEVICE);
+ 
+         // Trigger message pending value, then poll for response from GSP
+         kflcnRegWrite_HAL(pGpu, pKernelFalcon, NV_PFALCON_FALCON_MAILBOX0, NV_SPDM_REQUESTER_MESSAGE_PENDING_TOKEN);
+
+From 10072734b2f88f3580cdb036778ec27d2b4f2fb9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Mario=20B=C4=83l=C4=83nic=C4=83?=
+ <mariobalanica02@gmail.com>
+Date: Wed, 19 Nov 2025 15:05:21 -0500
+Subject: [PATCH 5/5] Fix cached DMA allocations on non-coherent hardware
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Repurpose `NV_MEMORY_DEFAULT` to hand out either cached or uncached CPU
+mappings based on hardware cache-coherency support.
+
+This type should be preferred over `NV_MEMORY_CACHED`, unless there's a
+good reason not to:
+- explicit cache maintenance is done where necessary (does not seem the
+case for most allocations so far).
+- there are certain memory requirements (e.g. atomics usually need
+cached memory on Arm).
+
+Most `NV_MEMORY_CACHED` allocations are replaced with this default type,
+except in cases where I've seen cache maintenance or uncached memory
+caused issues.
+
+There are some remaining cached allocations (e.g. imported from user
+memory, RUSD) that I haven't looked into - it's unclear whether those
+are subject to DMA coherency issues.
+
+In practice, all things I've tested (games, benchmarks, monitoring
+tools, CUDA) appear to work fine now on a non-coherent system
+(RK3588-based).
+
+Signed-off-by: Mario Bălănică <mariobalanica02@gmail.com>
+---
+ src/nvidia/arch/nvalloc/unix/src/os.c         |  5 +++
+ src/nvidia/arch/nvalloc/unix/src/osmemdesc.c  |  4 +-
+ src/nvidia/src/kernel/gpu/ccu/kernel_ccu.c    |  2 +-
+ .../kernel/gpu/disp/inst_mem/disp_inst_mem.c  |  2 +-
+ .../gpu/falcon/kernel_crashcat_engine.c       |  4 +-
+ .../arch/volta/kernel_channel_group_gv100.c   |  4 +-
+ .../gpu/fsp/arch/hopper/kern_fsp_gh100.c      |  4 +-
+ .../src/kernel/gpu/gpu_user_shared_data.c     |  9 +++-
+ .../src/kernel/gpu/gr/kernel_graphics.c       |  2 +-
+ .../gpu/gsp/arch/hopper/kernel_gsp_gh100.c    |  2 +-
+ .../gpu/gsp/arch/turing/kernel_gsp_tu102.c    |  4 +-
+ src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c    | 12 +++---
+ .../src/kernel/gpu/gsp/message_queue_cpu.c    |  2 +-
+ .../gpu/mem_mgr/arch/maxwell/fbsr_gm107.c     |  4 +-
+ src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c  | 22 ++++++++++
+ src/nvidia/src/kernel/gpu/mem_mgr/mem_utils.c |  2 +-
+ src/nvidia/src/kernel/gpu/mmu/kern_gmmu.c     |  8 ++--
+ .../sec2/arch/blackwell/kernel_sec2_gb10b.c   |  2 +-
+ .../sec2/arch/blackwell/kernel_sec2_gb20b.c   |  2 +-
+ src/nvidia/src/kernel/gpu/spdm/spdm.c         |  2 +-
+ .../src/kernel/gpu/uvm/arch/volta/uvm_gv100.c |  2 +-
+ src/nvidia/src/kernel/gpu/uvm/uvm.c           |  2 +-
+ src/nvidia/src/kernel/mem_mgr/mem.c           | 42 ++++++++++++-------
+ src/nvidia/src/kernel/rmapi/nv_gpu_ops.c      | 15 ++++---
+ src/nvidia/src/kernel/vgpu/rpc.c              |  2 +-
+ src/nvidia/src/kernel/vgpu/vgpu_util.c        |  2 +-
+ 26 files changed, 107 insertions(+), 56 deletions(-)
+
+diff --git a/src/nvidia/arch/nvalloc/unix/src/os.c b/src/nvidia/arch/nvalloc/unix/src/os.c
+index b3a4edab68..912a7e7dfa 100644
+--- a/src/nvidia/arch/nvalloc/unix/src/os.c
++++ b/src/nvidia/arch/nvalloc/unix/src/os.c
+@@ -908,6 +908,11 @@ NV_STATUS osAllocPagesInternal(
+     memdescSetAddress(pMemDesc, NvP64_NULL);
+     memdescSetMemData(pMemDesc, NULL, NULL);
+ 
++    //
++    // XXX: Is this a workaround for hardware with broken NoSnoop?
++    // If so, consider checking PDB_PROP_CL_NOSNOOP_NOT_CAPABLE and
++    // move this to memdescSetCpuCacheAttrib().
++    //
+ #if (defined(NVCPU_AARCH64) && RMCFG_MODULE_CL)
+     {
+         OBJCL   *pCl       = SYS_GET_CL(pSys);
+diff --git a/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c b/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c
+index 85866213b3..3d84012ca8 100644
+--- a/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c
++++ b/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c
+@@ -593,7 +593,7 @@ osCreateOsDescriptorFromPhysAddr
+     MEMORY_DESCRIPTOR *pMemDesc;
+     NvU64 *pPteArray;
+     NvU64  base = 0;
+-    NvU32  cache_type = NV_MEMORY_CACHED;
++    NvU32  cache_type = NV_MEMORY_DEFAULT;
+     NvU64  memdescFlags = MEMDESC_FLAGS_NONE;
+     NvU64 *pPhys_addrs;
+     NvU64  num_os_pages;
+@@ -750,7 +750,7 @@ _createMemdescFromDmaBufSgtHelper
+     }
+     else if (!FLD_TEST_DRF(OS02, _FLAGS, _COHERENCY, _UNCACHED, flags))
+     {
+-        cacheType = NV_MEMORY_CACHED;
++        cacheType = NV_MEMORY_DEFAULT;
+     }
+ 
+     if (FLD_TEST_DRF(OS02, _FLAGS, _GPU_CACHEABLE, _YES, flags))
+diff --git a/src/nvidia/src/kernel/gpu/ccu/kernel_ccu.c b/src/nvidia/src/kernel/gpu/ccu/kernel_ccu.c
+index c31d829d84..c942e07887 100644
+--- a/src/nvidia/src/kernel/gpu/ccu/kernel_ccu.c
++++ b/src/nvidia/src/kernel/gpu/ccu/kernel_ccu.c
+@@ -94,7 +94,7 @@ _kccuAllocMemory
+ 
+     // Create a memory descriptor data structure for the shared buffer
+     status = memdescCreate(&pKernelCcu->pMemDesc[idx], pGpu, shrBufSize, 0, NV_MEMORY_CONTIGUOUS,
+-                           aperture, NV_MEMORY_CACHED, flags);
++                           aperture, NV_MEMORY_DEFAULT, flags);
+     if (status != NV_OK)
+     {
+         NV_PRINTF(LEVEL_ERROR, "CCU memdescCreate failed for(%u) with status: 0x%x\n", idx, status);
+diff --git a/src/nvidia/src/kernel/gpu/disp/inst_mem/disp_inst_mem.c b/src/nvidia/src/kernel/gpu/disp/inst_mem/disp_inst_mem.c
+index 0d962d0954..ed4a9a0c60 100644
+--- a/src/nvidia/src/kernel/gpu/disp/inst_mem/disp_inst_mem.c
++++ b/src/nvidia/src/kernel/gpu/disp/inst_mem/disp_inst_mem.c
+@@ -243,7 +243,7 @@ instmemInitMemDesc
+         // dispInstMemAttr to NV_MEMORY_CACHED this needs to be set based on system configuration/registry parameter.
+         //
+         instmemSetMemory(pGpu, pInstMem,
+-                         ADDR_SYSMEM, NV_MEMORY_CACHED,
++                         ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                          0 /* base */, instMemSize);
+     }
+     else if (IS_GSP_CLIENT(pGpu))
+diff --git a/src/nvidia/src/kernel/gpu/falcon/kernel_crashcat_engine.c b/src/nvidia/src/kernel/gpu/falcon/kernel_crashcat_engine.c
+index 95f0adcdbb..c4a66dff62 100644
+--- a/src/nvidia/src/kernel/gpu/falcon/kernel_crashcat_engine.c
++++ b/src/nvidia/src/kernel/gpu/falcon/kernel_crashcat_engine.c
+@@ -59,7 +59,7 @@ NV_STATUS kcrashcatEngineConfigure_IMPL
+         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
+             memdescCreate(&pKernelCrashCatEng->pQueueMemDesc, pKernelCrashCatEng->pGpu,
+                           pEngConfig->allocQueueSize, CRASHCAT_QUEUE_ALIGNMENT, NV_TRUE,
+-                          ADDR_SYSMEM, NV_MEMORY_CACHED, MEMDESC_FLAGS_NONE));
++                          ADDR_SYSMEM, NV_MEMORY_DEFAULT, MEMDESC_FLAGS_NONE));
+ 
+         NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
+             memdescAlloc(pKernelCrashCatEng->pQueueMemDesc),
+@@ -230,7 +230,7 @@ static MEMORY_DESCRIPTOR *_kcrashcatEngineCreateBufferMemDesc
+     NV_ADDRESS_SPACE bufAddrSpace = _crashcatApertureToAddressSpace(pBufDesc->aperture);
+     NV_CHECK_OK_OR_ELSE(status, LEVEL_ERROR,
+         memdescCreate(&pMemDesc, pKernelCrashCatEng->pGpu, pBufDesc->size, 0,
+-                      NV_TRUE, bufAddrSpace, NV_MEMORY_CACHED, MEMDESC_FLAGS_NONE),
++                      NV_TRUE, bufAddrSpace, NV_MEMORY_DEFAULT, MEMDESC_FLAGS_NONE),
+         return NULL;);
+ 
+     memdescDescribe(pMemDesc, bufAddrSpace, pBufDesc->physOffset, pBufDesc->size);
+diff --git a/src/nvidia/src/kernel/gpu/fifo/arch/volta/kernel_channel_group_gv100.c b/src/nvidia/src/kernel/gpu/fifo/arch/volta/kernel_channel_group_gv100.c
+index 4ade402e3a..570ee156e3 100644
+--- a/src/nvidia/src/kernel/gpu/fifo/arch/volta/kernel_channel_group_gv100.c
++++ b/src/nvidia/src/kernel/gpu/fifo/arch/volta/kernel_channel_group_gv100.c
+@@ -47,7 +47,7 @@ kchangrpAllocFaultMethodBuffers_GV100
+     NvU32                        runQueues      = kfifoGetNumRunqueues_HAL(pGpu, pKernelFifo);
+     NvU32                        index          = 0;
+     NvU32                        faultBufApert  = ADDR_SYSMEM;
+-    NvU32                        faultBufAttr   = NV_MEMORY_CACHED;
++    NvU32                        faultBufAttr   = NV_MEMORY_DEFAULT;
+     NvU64                        memDescFlags   = MEMDESC_FLAGS_LOST_ON_SUSPEND;
+     HW_ENG_FAULT_METHOD_BUFFER  *pFaultMthdBuf  = NULL;
+     NvU32                        gfid           = pKernelChannelGroup->gfid;
+@@ -85,14 +85,12 @@ kchangrpAllocFaultMethodBuffers_GV100
+         // host, force fault buffer aperture to vid mem.
+         //
+         faultBufApert = ADDR_FBMEM;
+-        faultBufAttr  = NV_MEMORY_CACHED;
+         memDescFlags  |= MEMDESC_FLAGS_OWNED_BY_CURRENT_DEVICE;
+     }
+     else
+     {
+         // Get the right aperture/attribute
+         faultBufApert = ADDR_SYSMEM;
+-        faultBufAttr  = NV_MEMORY_CACHED;
+         memdescOverrideInstLoc(DRF_VAL(_REG_STR_RM, _INST_LOC_3, _FAULT_METHOD_BUFFER, pGpu->instLocOverrides3),
+                                "fault method buffer", &faultBufApert, &faultBufAttr);
+         if (faultBufApert == ADDR_FBMEM)
+diff --git a/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c b/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c
+index 6cc75cb38d..94facb30b7 100644
+--- a/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c
++++ b/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c
+@@ -1036,7 +1036,7 @@ kfspSetupGspImages
+     {
+         NV_ASSERT(pKernelFsp->pGspFmcMemdesc == NULL); // If we assert the pointer becomes a zombie.
+         status = memdescCreate(&pKernelFsp->pGspFmcMemdesc, pGpu, pGspImageMapSize,
+-                               0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
++                               0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT, flags);
+         NV_ASSERT_OR_GOTO(status == NV_OK, failed);
+ 
+         memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_7,
+@@ -1381,7 +1381,7 @@ kfspPrepareBootCommands_GH100
+         {
+             NV_ASSERT(pKernelFsp->pSysmemFrtsMemdesc == NULL); // If we assert the pointer becomes a zombie.
+             status = memdescCreate(&pKernelFsp->pSysmemFrtsMemdesc, pGpu, frtsSize,
+-                                   0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
++                                   0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT, flags);
+             NV_ASSERT_OR_GOTO(status == NV_OK, failed);
+ 
+             memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_8,
+diff --git a/src/nvidia/src/kernel/gpu/gpu_user_shared_data.c b/src/nvidia/src/kernel/gpu/gpu_user_shared_data.c
+index 70e5d8d5b6..bf63f8d1cb 100644
+--- a/src/nvidia/src/kernel/gpu/gpu_user_shared_data.c
++++ b/src/nvidia/src/kernel/gpu/gpu_user_shared_data.c
+@@ -288,7 +288,14 @@ gpuCreateRusdMemory_IMPL
+     if ((sysGetStaticConfig(SYS_GET_INSTANCE()))->bOsCCEnabled)
+         return NV_OK;
+ 
+-    // Create a kernel-side mapping for writing RUSD data
++    //
++    // Create a kernel-side mapping for writing RUSD data.
++    // This must be cached memory due to atomic intrinsic usage, which is not
++    // supported on uncached memory by some Arm platforms.
++    //
++    // XXX: There might be coherency issues with this allocation, although
++    // statistics appear fine at a quick glance.
++    //
+     NV_ASSERT_OK_OR_RETURN(memdescCreate(ppMemDesc, pGpu, sizeof(NV00DE_SHARED_DATA), 0, NV_TRUE,
+                            ADDR_SYSMEM, NV_MEMORY_CACHED, MEMDESC_FLAGS_USER_READ_ONLY));
+ 
+diff --git a/src/nvidia/src/kernel/gpu/gr/kernel_graphics.c b/src/nvidia/src/kernel/gpu/gr/kernel_graphics.c
+index f78f0f9ff3..55a16597fc 100644
+--- a/src/nvidia/src/kernel/gpu/gr/kernel_graphics.c
++++ b/src/nvidia/src/kernel/gpu/gr/kernel_graphics.c
+@@ -179,7 +179,7 @@ kgraphicsConstructEngine_IMPL
+ 
+     // FECS event buffer defaults to cached SYSMEM
+     pKernelGraphics->globalCtxBuffersInfo.globalCtxAttr[GR_GLOBALCTX_BUFFER_FECS_EVENT].pAllocList = ADDRLIST_SYSMEM_ONLY;
+-    pKernelGraphics->globalCtxBuffersInfo.globalCtxAttr[GR_GLOBALCTX_BUFFER_FECS_EVENT].cpuAttr    = NV_MEMORY_CACHED;
++    pKernelGraphics->globalCtxBuffersInfo.globalCtxAttr[GR_GLOBALCTX_BUFFER_FECS_EVENT].cpuAttr    = NV_MEMORY_DEFAULT;
+ 
+     // Process instloc overrides
+     {
+diff --git a/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c b/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c
+index c581db3b22..3f65e8a43a 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c
++++ b/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c
+@@ -162,7 +162,7 @@ kgspAllocBootArgs_GH100
+     NV_ASSERT_OK_OR_GOTO(nvStatus,
+                           memdescCreate(&pKernelGsp->pGspFmcArgumentsDescriptor,
+                                         pGpu, sizeof(GSP_FMC_BOOT_PARAMS), 0x1000,
+-                                        NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                                        NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                                         flags),
+                           _kgspAllocBootArgs_exit_cleanup);
+ 
+diff --git a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
+index 39d9635b69..bd57883a9d 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
++++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
+@@ -118,7 +118,7 @@ kgspAllocBootArgs_TU102
+     NV_ASSERT_OK_OR_GOTO(nvStatus,
+                          memdescCreate(&pKernelGsp->pWprMetaDescriptor,
+                                        pGpu, 0x1000, 0x1000,
+-                                       NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                                       NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                                        flags),
+                         _kgspAllocBootArgs_exit_cleanup);
+ 
+@@ -174,7 +174,7 @@ kgspAllocBootArgs_TU102
+     NV_ASSERT_OK_OR_GOTO(nvStatus,
+                          memdescCreate(&pKernelGsp->pGspArgumentsDescriptor,
+                                        pGpu, 0x1000, 0x1000,
+-                                       NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                                       NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                                        flags),
+                          _kgspAllocBootArgs_exit_cleanup);
+ 
+diff --git a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+index e262e8fc3f..1565e752a7 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -2638,7 +2638,7 @@ _setupLogBufferVgpu
+                         pGpu,
+                         logVgpuSetupParams.bufSize,
+                         RM_PAGE_SIZE,
+-                        NV_TRUE, ADDR_FBMEM, NV_MEMORY_CACHED,
++                        NV_TRUE, ADDR_FBMEM, NV_MEMORY_DEFAULT,
+                         MEMDESC_FLAGS_NONE),
+         exit);
+ 
+@@ -2942,7 +2942,7 @@ _setupLogBufferBaremetal
+                         pGpu,
+                         size,
+                         RM_PAGE_SIZE,
+-                        NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                        NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                         flags),
+         exit);
+ 
+@@ -3337,7 +3337,7 @@ _kgspSetupTaskRMCoverageStructure (
+                         pGpu,
+                         BULLSEYE_GSP_RM_COVERAGE_SIZE,
+                         RM_PAGE_SIZE,
+-                        NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                        NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                         MEMDESC_FLAGS_NONE), done);
+ 
+     memdescTagAlloc(nvStatus,
+@@ -4339,7 +4339,7 @@ kgspPrepareBootBinaryImage_IMPL
+                                 pGpu,
+                                 bufSizeAligned,
+                                 RM_PAGE_SIZE,
+-                                NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                                NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                                 flags),
+                         fail);
+ 
+@@ -4424,7 +4424,7 @@ _kgspCreateSignatureMemdesc
+     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
+         memdescCreate(&pKernelGsp->pSignatureMemdesc, pGpu,
+             NV_ALIGN_UP(pGspFw->signatureSize, 256), 256,
+-            NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
++            NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT, flags));
+ 
+     memdescTagAlloc(status,
+             NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_16, pKernelGsp->pSignatureMemdesc);
+@@ -4712,7 +4712,7 @@ kgspCreateRadix3_IMPL
+             LIBOS_MEMORY_REGION_RADIX_PAGE_SIZE,
+             NV_MEMORY_NONCONTIGUOUS,
+             ADDR_SYSMEM,
+-            NV_MEMORY_CACHED,
++            NV_MEMORY_DEFAULT,
+             flags),
+         done);
+ 
+diff --git a/src/nvidia/src/kernel/gpu/gsp/message_queue_cpu.c b/src/nvidia/src/kernel/gpu/gsp/message_queue_cpu.c
+index 80c7212c5a..66de4947e3 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/message_queue_cpu.c
++++ b/src/nvidia/src/kernel/gpu/gsp/message_queue_cpu.c
+@@ -230,7 +230,7 @@ GspMsgQueuesInit
+     //
+     NV_ASSERT_OK_OR_GOTO(nvStatus,
+         memdescCreate(&pMQCollection->pSharedMemDesc, pGpu, sharedBufSize,
+-            RM_PAGE_SIZE, NV_MEMORY_NONCONTIGUOUS, ADDR_SYSMEM, NV_MEMORY_CACHED,
++            RM_PAGE_SIZE, NV_MEMORY_NONCONTIGUOUS, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+             flags),
+         done);
+ 
+diff --git a/src/nvidia/src/kernel/gpu/mem_mgr/arch/maxwell/fbsr_gm107.c b/src/nvidia/src/kernel/gpu/mem_mgr/arch/maxwell/fbsr_gm107.c
+index a9505db36c..a1194f701c 100644
+--- a/src/nvidia/src/kernel/gpu/mem_mgr/arch/maxwell/fbsr_gm107.c
++++ b/src/nvidia/src/kernel/gpu/mem_mgr/arch/maxwell/fbsr_gm107.c
+@@ -202,7 +202,7 @@ fbsrInit_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr)
+         // to to use cached memory.
+         //
+         status = memdescCreate(&pFbsr->pSysMemDesc, pGpu, memSize,
+-                               0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                               0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                                MEMDESC_FLAGS_NONE);
+         if (status != NV_OK)
+         {
+@@ -371,7 +371,7 @@ fbsrBegin_GM107(OBJGPU *pGpu, OBJFBSR *pFbsr, FBSR_OP_TYPE op)
+                         // On Windows, pageable memory is also cacheable.
+                         status = memdescCreate(&pFbsr->pSysMemDesc, pGpu,
+                                                pFbsr->length, 0, NV_FALSE,
+-                                               ADDR_SYSMEM, NV_MEMORY_CACHED,
++                                               ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                                                MEMDESC_FLAGS_PAGED_SYSMEM);
+                     }
+                     if (status != NV_OK)
+diff --git a/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c b/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c
+index e771ec9429..1a723ffed9 100644
+--- a/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c
++++ b/src/nvidia/src/kernel/gpu/mem_mgr/mem_desc.c
+@@ -38,6 +38,7 @@
+ #include "mem_mgr/virt_mem_mgr.h"
+ #include "core/system.h"
+ #include "vgpu/vgpu_util.h"
++#include "platform/chipset/chipset.h"
+ #include "platform/sli/sli.h"
+ #include "resserv/rs_client.h"
+ 
+@@ -3640,6 +3641,27 @@ void memdescSetCpuCacheAttrib
+     NvU32 cpuCacheAttrib
+ )
+ {
++    //
++    // Use NV_MEMORY_DEFAULT to get a reasonable default caching type for the
++    // given descriptor (i.e. DMA coherent), unless explicit cache maintenance
++    // is done (for performance reasons) or there are certain memory requirements
++    // (e.g. atomics need NV_MEMORY_CACHED on Arm).
++    //
++    if (cpuCacheAttrib == NV_MEMORY_DEFAULT)
++    {
++        OBJCL *pCl = SYS_GET_CL(SYS_GET_INSTANCE());
++
++        if (memdescGetFlag(pMemDesc, MEMDESC_FLAGS_CPU_ONLY) ||
++            ((pCl != NULL) && pCl->getProperty(pCl, PDB_PROP_CL_IS_CHIPSET_IO_COHERENT)))
++        {
++            cpuCacheAttrib = NV_MEMORY_CACHED;
++        }
++        else
++        {
++            cpuCacheAttrib = NV_MEMORY_UNCACHED;
++        }
++    }
++
+     //
+     // When running 64-bit MODS on ARM v8, we need to force all CPU mappings as WC.
+     // This seems to be an issue with glibc. See bug 1556221.
+diff --git a/src/nvidia/src/kernel/gpu/mem_mgr/mem_utils.c b/src/nvidia/src/kernel/gpu/mem_mgr/mem_utils.c
+index c1318ad499..d9dc103b43 100644
+--- a/src/nvidia/src/kernel/gpu/mem_mgr/mem_utils.c
++++ b/src/nvidia/src/kernel/gpu/mem_mgr/mem_utils.c
+@@ -162,7 +162,7 @@ _memmgrAllocAndMapSurface
+ 
+     NV_ASSERT_OK_OR_RETURN(
+         memdescCreate(ppMemDesc, pGpu, size, RM_PAGE_SIZE, NV_TRUE,
+-                      ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
++                      ADDR_SYSMEM, NV_MEMORY_DEFAULT, flags));
+ 
+     memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_77,
+                     (*ppMemDesc));
+diff --git a/src/nvidia/src/kernel/gpu/mmu/kern_gmmu.c b/src/nvidia/src/kernel/gpu/mmu/kern_gmmu.c
+index ee4f0c75d0..ab1a2072e9 100644
+--- a/src/nvidia/src/kernel/gpu/mmu/kern_gmmu.c
++++ b/src/nvidia/src/kernel/gpu/mmu/kern_gmmu.c
+@@ -999,14 +999,14 @@ kgmmuFaultBufferGetAddressSpace_IMPL
+     if (index == NON_REPLAYABLE_FAULT_BUFFER)
+     {
+         faultBufferAddrSpace = bAllocInVidmem ? ADDR_FBMEM : ADDR_SYSMEM;
+-        faultBufferAttr      = bAllocInVidmem ? NV_MEMORY_UNCACHED : NV_MEMORY_CACHED;
++        faultBufferAttr      = bAllocInVidmem ? NV_MEMORY_UNCACHED : NV_MEMORY_DEFAULT;
+         memdescOverrideInstLoc(DRF_VAL(_REG_STR_RM, _INST_LOC_3, _UVM_FAULT_BUFFER_NONREPLAYABLE, pGpu->instLocOverrides3),
+                                "UVM non-replayable fault", &faultBufferAddrSpace, &faultBufferAttr);
+     }
+     else if (index == REPLAYABLE_FAULT_BUFFER)
+     {
+         faultBufferAddrSpace = bAllocInVidmem ? ADDR_FBMEM : ADDR_SYSMEM;
+-        faultBufferAttr      = bAllocInVidmem ? NV_MEMORY_UNCACHED : NV_MEMORY_CACHED;
++        faultBufferAttr      = bAllocInVidmem ? NV_MEMORY_UNCACHED : NV_MEMORY_DEFAULT;
+         memdescOverrideInstLoc(DRF_VAL(_REG_STR_RM, _INST_LOC_4, _UVM_FAULT_BUFFER_REPLAYABLE, pGpu->instLocOverrides4),
+                                "UVM replayable fault", &faultBufferAddrSpace, &faultBufferAttr);
+     }
+@@ -1493,7 +1493,7 @@ _kgmmuClientShadowFaultBufferQueueAllocate
+ 
+     status = memdescCreate(&pQueueMemDesc, pGpu,
+                            sizeof(GMMU_SHADOW_FAULT_BUF), RM_PAGE_SIZE,
+-                           NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                           NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                            flags);
+     if (status != NV_OK)
+     {
+@@ -1591,7 +1591,7 @@ _kgmmuClientShadowFaultBufferPagesAllocate
+ 
+     status = memdescCreate(&pMemDesc, pGpu,
+                            shadowFaultBufferSizeTotal, RM_PAGE_SIZE,
+-                           NV_FALSE, ADDR_SYSMEM, NV_MEMORY_CACHED,
++                           NV_FALSE, ADDR_SYSMEM, NV_MEMORY_DEFAULT,
+                            flags);
+     if (status != NV_OK)
+     {
+diff --git a/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb10b.c b/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb10b.c
+index a4950c29d3..792c46b73a 100644
+--- a/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb10b.c
++++ b/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb10b.c
+@@ -485,7 +485,7 @@ ksec2SetupGspImages_GB10B
+         pGspImageMapSize = NV_ALIGN_UP(pGspImageSize, 0x1000);
+ 
+         status = memdescCreate(&pKernelSec2->pGspFmcMemdesc, pGpu, pGspImageMapSize,
+-                           0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
++                           0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT, flags);
+         NV_ASSERT_OR_GOTO(status == NV_OK, failed);
+ 
+         memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_7,
+diff --git a/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb20b.c b/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb20b.c
+index 466eae4e4a..633a73246a 100644
+--- a/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb20b.c
++++ b/src/nvidia/src/kernel/gpu/sec2/arch/blackwell/kernel_sec2_gb20b.c
+@@ -779,7 +779,7 @@ ksec2SetupGspImages_GB20B
+     pGspImageMapSize = NV_ALIGN_UP(pGspImageSize, 0x1000);
+ 
+     status = memdescCreate(&pKernelSec2->pGspFmcMemdesc, pGpu, pGspImageMapSize,
+-                           0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags);
++                           0, NV_TRUE, ADDR_SYSMEM, NV_MEMORY_DEFAULT, flags);
+     NV_ASSERT_OR_GOTO(status == NV_OK, failed);
+ 
+     memdescTagAlloc(status, NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_7,
+diff --git a/src/nvidia/src/kernel/gpu/spdm/spdm.c b/src/nvidia/src/kernel/gpu/spdm/spdm.c
+index 3c35b78c31..1eb8cfa1c9 100644
+--- a/src/nvidia/src/kernel/gpu/spdm/spdm.c
++++ b/src/nvidia/src/kernel/gpu/spdm/spdm.c
+@@ -274,7 +274,7 @@ spdmSetupCommunicationBuffers_IMPL
+     // Create memory descriptor for payload buffer
+     status = memdescCreate(&pSpdm->pPayloadBufferMemDesc, pGpu, NV_SPDM_SYSMEM_SURFACE_SIZE_PAGE_ALIGNED,
+                            NV_SPDM_SYSMEM_SURFACE_ALIGNMENT_IN_BYTES, NV_TRUE, ADDR_SYSMEM,
+-                           NV_MEMORY_CACHED, MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY);
++                           NV_MEMORY_DEFAULT, MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY);
+     if (status != NV_OK || pSpdm->pPayloadBufferMemDesc == NULL)
+     {
+         status = NV_ERR_INSUFFICIENT_RESOURCES;
+diff --git a/src/nvidia/src/kernel/gpu/uvm/arch/volta/uvm_gv100.c b/src/nvidia/src/kernel/gpu/uvm/arch/volta/uvm_gv100.c
+index 1ff46bab61..1661a8d213 100644
+--- a/src/nvidia/src/kernel/gpu/uvm/arch/volta/uvm_gv100.c
++++ b/src/nvidia/src/kernel/gpu/uvm/arch/volta/uvm_gv100.c
+@@ -292,7 +292,7 @@ uvmInitAccessCntrBuffer_GV100
+ 
+     accessCntrBufferSize = uvmGetAccessCounterBufferSize_HAL(pGpu, pUvm, pAccessCounterBuffer->accessCounterIndex);
+     accessCntrBufferAperture = ADDR_SYSMEM;
+-    accessCntrBufferAttr     = NV_MEMORY_CACHED;
++    accessCntrBufferAttr     = NV_MEMORY_DEFAULT;
+     memdescOverrideInstLoc(DRF_VAL(_REG_STR_RM, _INST_LOC_4, _UVM_FAULT_BUFFER_REPLAYABLE, pGpu->instLocOverrides4),
+                            "UVM access counter", &accessCntrBufferAperture, &accessCntrBufferAttr);
+ 
+diff --git a/src/nvidia/src/kernel/gpu/uvm/uvm.c b/src/nvidia/src/kernel/gpu/uvm/uvm.c
+index 6565ff8684..7f164b08f8 100644
+--- a/src/nvidia/src/kernel/gpu/uvm/uvm.c
++++ b/src/nvidia/src/kernel/gpu/uvm/uvm.c
+@@ -242,7 +242,7 @@ uvmAccessCntrBufferRegister_IMPL
+     NV_STATUS status;
+     MEMORY_DESCRIPTOR *pMemDesc;
+     NvU32 addrSpace = ADDR_SYSMEM;
+-    NvU32 attr      = NV_MEMORY_CACHED;
++    NvU32 attr      = NV_MEMORY_DEFAULT;
+ 
+     if (pUvm->pAccessCounterBuffers == NULL)
+     {
+diff --git a/src/nvidia/src/kernel/mem_mgr/mem.c b/src/nvidia/src/kernel/mem_mgr/mem.c
+index 2a81684a5a..76e5f99f8c 100644
+--- a/src/nvidia/src/kernel/mem_mgr/mem.c
++++ b/src/nvidia/src/kernel/mem_mgr/mem.c
+@@ -1214,20 +1214,34 @@ void memSetSysmemCacheAttrib_IMPL
+         gpuCacheAttrib = NV_MEMORY_UNCACHED;
+     }
+ 
+-    if (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr) == NVOS32_ATTR_COHERENCY_UNCACHED)
+-        cpuCacheAttrib = NV_MEMORY_UNCACHED;
+-    else if (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr) == NVOS32_ATTR_COHERENCY_CACHED)
+-        cpuCacheAttrib = NV_MEMORY_CACHED;
+-    else if (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr) == NVOS32_ATTR_COHERENCY_WRITE_COMBINE)
+-        cpuCacheAttrib = NV_MEMORY_WRITECOMBINED;
+-    else if (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr) == NVOS32_ATTR_COHERENCY_WRITE_THROUGH)
+-        cpuCacheAttrib = NV_MEMORY_CACHED;
+-    else if (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr) == NVOS32_ATTR_COHERENCY_WRITE_PROTECT)
+-        cpuCacheAttrib = NV_MEMORY_CACHED;
+-    else if (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr) == NVOS32_ATTR_COHERENCY_WRITE_BACK)
+-        cpuCacheAttrib = NV_MEMORY_CACHED;
+-    else
+-        cpuCacheAttrib = 0;
++    switch (DRF_VAL(OS32, _ATTR, _COHERENCY, pAllocData->attr))
++    {
++        case NVOS32_ATTR_COHERENCY_UNCACHED:
++            cpuCacheAttrib = NV_MEMORY_UNCACHED;
++            break;
++        case NVOS32_ATTR_COHERENCY_WRITE_COMBINE:
++            cpuCacheAttrib = NV_MEMORY_WRITECOMBINED;
++            break;
++        case NVOS32_ATTR_COHERENCY_CACHED:
++        case NVOS32_ATTR_COHERENCY_WRITE_THROUGH:
++        case NVOS32_ATTR_COHERENCY_WRITE_PROTECT:
++        case NVOS32_ATTR_COHERENCY_WRITE_BACK:
++            //
++            // XXX: It's unclear in which cases the clients will perform their own
++            // CPU cache maintenance, but it only seems to happen when the GPU mapping
++            // is also cached (cliresCtrlCmdOsUnixFlushUserCache() will be called).
++            // This indicates that not all clients factor in hardware coherency support
++            // when requesting cached mappings, so it may be safer to just always use
++            // NV_MEMORY_DEFAULT, which only gives cached memory on coherent hardware.
++            //
++            cpuCacheAttrib = (gpuCacheAttrib == NV_MEMORY_CACHED) ? NV_MEMORY_CACHED :
++                                                                    NV_MEMORY_DEFAULT;
++            break;
++        default:
++            NV_ASSERT(0);
++            cpuCacheAttrib = NV_MEMORY_UNCACHED;
++            break;
++    }
+ 
+     ct_assert(NVOS32_ATTR_COHERENCY_UNCACHED      == NVOS02_FLAGS_COHERENCY_UNCACHED);
+     ct_assert(NVOS32_ATTR_COHERENCY_CACHED        == NVOS02_FLAGS_COHERENCY_CACHED);
+diff --git a/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c b/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
+index a4a95b045c..aff781ea1a 100644
+--- a/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
++++ b/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
+@@ -110,6 +110,7 @@
+ #include <gpu/mmu/kern_gmmu.h>
+ #include <gpu/subdevice/subdevice.h>
+ #include <gpu_mgr/gpu_mgr.h>
++#include <kernel/gpu/bif/kernel_bif.h>
+ #include <kernel/gpu/fifo/kernel_channel.h>
+ #include <kernel/gpu/fifo/kernel_channel_group.h>
+ #include <kernel/gpu/fifo/kernel_channel_group_api.h>
+@@ -4836,6 +4837,7 @@ static NV_STATUS nvGpuOpsAllocPhysical(struct gpuDevice *device,
+     NV_MEMORY_ALLOCATION_PARAMS memAllocParams = {0};
+     NV_STATUS status = NV_OK;
+     RM_API *pRmApi = rmapiGetInterface(RMAPI_EXTERNAL_KERNEL);
++    OBJGPU *pGpu = NULL;
+ 
+     NvHandle physHandle  = 0;
+ 
+@@ -4843,6 +4845,9 @@ static NV_STATUS nvGpuOpsAllocPhysical(struct gpuDevice *device,
+     NV_ASSERT(device);
+     NV_ASSERT(paOffset);
+ 
++    status = _nvGpuOpsGetGpuFromDevice(device, &pGpu);
++    NV_ASSERT_OR_RETURN((status == NV_OK) && (pGpu != NULL), NV_ERR_INVALID_ARGUMENT);
++
+     // then allocate the physical memory in either sysmem or fb.
+     memAllocParams.owner = HEAP_OWNER_RM_KERNEL_CLIENT;
+ 
+@@ -4858,9 +4863,9 @@ static NV_STATUS nvGpuOpsAllocPhysical(struct gpuDevice *device,
+                                       DRF_DEF(OS32, _ATTR, _LOCATION, _PCI) :
+                                       DRF_DEF(OS32, _ATTR, _LOCATION, _VIDMEM);
+ 
+-    // Always enable caching for System Memory as all the currently supported
+-    // platforms are IO coherent.
+-    NvBool bCached = isSystemMemory;
++    // Set CPU caching attribute
++    KernelBif *pKernelBif = GPU_GET_KERNEL_BIF(pGpu);
++    NvBool bCached = isSystemMemory && kbifIsSnoopDmaCapable(pGpu, pKernelBif);
+     memAllocParams.attr |= bCached ?
+                                 DRF_DEF(OS32, _ATTR, _COHERENCY, _CACHED):
+                                 DRF_DEF(OS32, _ATTR, _COHERENCY, _UNCACHED);
+@@ -10295,7 +10300,7 @@ _shadowMemdescCreateFlcn(gpuRetainedChannel *retainedChannel,
+         pCtxBufferInfo->alignment,
+         pCtxBufferInfo->bIsContigous,
+         pCtxBufferInfo->aperture,
+-        NV_MEMORY_CACHED,
++        NV_MEMORY_DEFAULT,
+         MEMDESC_FLAGS_NONE
+     );
+     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, status);
+@@ -10395,7 +10400,7 @@ _shadowMemdescCreate(gpuRetainedChannel *retainedChannel,
+         pCtxBufferInfo->alignment,
+         pCtxBufferInfo->bIsContigous,
+         pCtxBufferInfo->aperture,
+-        NV_MEMORY_CACHED,
++        NV_MEMORY_DEFAULT,
+         MEMDESC_FLAGS_NONE
+     );
+     if (status != NV_OK)
+diff --git a/src/nvidia/src/kernel/vgpu/rpc.c b/src/nvidia/src/kernel/vgpu/rpc.c
+index d2c5fe01ff..c983449578 100644
+--- a/src/nvidia/src/kernel/vgpu/rpc.c
++++ b/src/nvidia/src/kernel/vgpu/rpc.c
+@@ -260,7 +260,7 @@ _allocRpcMemDescSysmem(
+                       0,
+                       bContig,
+                       ADDR_SYSMEM,
+-                      NV_MEMORY_CACHED,
++                      NV_MEMORY_DEFAULT,
+                       memdescFlag));
+ 
+     memdescSetFlag(*ppMemDesc, MEMDESC_FLAGS_KERNEL_MODE, NV_TRUE);
+diff --git a/src/nvidia/src/kernel/vgpu/vgpu_util.c b/src/nvidia/src/kernel/vgpu/vgpu_util.c
+index 9db90f622b..5e1ec55516 100644
+--- a/src/nvidia/src/kernel/vgpu/vgpu_util.c
++++ b/src/nvidia/src/kernel/vgpu/vgpu_util.c
+@@ -143,7 +143,7 @@ NV_STATUS vgpuAllocSysmemPfnBitMapNode(OBJGPU *pGpu, VGPU_SYSMEM_PFN_BITMAP_NODE
+                             0,
+                             NV_MEMORY_NONCONTIGUOUS,
+                             ADDR_SYSMEM,
+-                            NV_MEMORY_CACHED,
++                            NV_MEMORY_DEFAULT,
+                             memFlags);
+      if (status != NV_OK)
+      {

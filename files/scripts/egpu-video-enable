@@ -1,0 +1,12 @@
+#!/bin/sh
+# Liga a saida de video pela eGPU, de forma permanente.
+set -eu
+sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=yes/' /etc/default/egpu-video
+/usr/local/sbin/egpu-video-apply
+if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
+    echo "Ativado e persistente. Aplique agora com: systemctl restart lightdm"
+else
+    echo "Marcado como ativo, mas a GPU nao esta pronta neste boot."
+    echo "Veja o motivo com: journalctl -t egpu-video-apply -b"
+    exit 1
+fi

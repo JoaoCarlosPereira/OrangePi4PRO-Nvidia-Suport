@@ -1,0 +1,7 @@
+[Unit]
+Description=Verifica se o X respondeu na eGPU e reverte se travou
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-video-watchdog
+TimeoutStartSec=180

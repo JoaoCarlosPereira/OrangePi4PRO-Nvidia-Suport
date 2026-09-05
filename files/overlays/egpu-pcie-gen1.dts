@@ -1,0 +1,11 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target-path = "/soc@3000000/pcie@6000000";
+        __overlay__ {
+            max-link-speed = <1>;
+        };
+    };
+};

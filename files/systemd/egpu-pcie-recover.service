@@ -1,0 +1,13 @@
+[Unit]
+Description=Recover Orange Pi 4 Pro PCIe endpoint enumeration
+After=systemd-modules-load.service
+Before=display-manager.service
+
+[Service]
+TimeoutStartSec=60
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-pcie-recover
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,19 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    fragment@0 {
+        target-path = "/soc@3000000/pcie@6000000";
+        __overlay__ {
+            #address-cells = <3>;
+            #size-cells = <2>;
+            // Preserve vendor config, I/O and non-prefetchable windows.
+            // A733 manual v0.92: PCIe slave high aperture 0x440000000-0x53fffffff.
+            // Reserve its first 512 MiB for 64-bit prefetchable GPU BARs.
+            ranges = <0x00000800 0 0x20000000 0 0x20000000 0 0x01000000>,
+                     <0x81000000 0 0x21000000 0 0x21000000 0 0x01000000>,
+                     <0x82000000 0 0x22000000 0 0x22000000 0 0x06000000>,
+                     <0xc3000000 4 0x40000000 4 0x40000000 0 0x20000000>;
+        };
+    };
+};

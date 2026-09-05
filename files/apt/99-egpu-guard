@@ -1,0 +1,5 @@
+// After any dpkg operation, check that the eGPU stack survived.
+// Does not block anything: warns loudly and restores modules if they vanish.
+DPkg::Post-Invoke {
+    "if [ -x /usr/local/sbin/egpu-health ]; then /usr/local/sbin/egpu-health --repair || echo '*** WARNING: eGPU stack affected. Run: sudo egpu-health ***'; fi";
+};

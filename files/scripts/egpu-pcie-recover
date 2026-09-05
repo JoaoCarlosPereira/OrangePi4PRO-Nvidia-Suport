@@ -1,0 +1,38 @@
+#!/bin/sh
+# Recupera a enumeracao do endpoint PCIe do Orange Pi 4 Pro.
+# O link A733 falha o primeiro treinamento Gen1 de forma intermitente;
+# aqui tentamos o unbind/bind varias vezes ate o endpoint aparecer.
+set -eu
+
+PCIE=6000000.pcie
+DRV=/sys/bus/platform/drivers/sunxi-pcie
+TENTATIVAS=5
+
+endpoint_presente() {
+    find /sys/bus/pci/devices -mindepth 1 -maxdepth 1 -name '0000:01:*' | grep -q .
+}
+
+# Sem root port nao ha nada a fazer.
+[ -e /sys/bus/pci/devices/0000:00:00.0 ] || exit 0
+
+# Nunca mexer no controlador se ja existe endpoint enumerado.
+if endpoint_presente; then
+    logger -t egpu-pcie-recover "endpoint ja presente no boot, nada a fazer"
+    exit 0
+fi
+
+i=1
+while [ "$i" -le "$TENTATIVAS" ]; do
+    echo $PCIE > $DRV/unbind 2>/dev/null || true
+    sleep 2
+    echo $PCIE > $DRV/bind 2>/dev/null || true
+    sleep 3
+    if endpoint_presente; then
+        logger -t egpu-pcie-recover "endpoint enumerado na tentativa $i"
+        exit 0
+    fi
+    i=$((i + 1))
+done
+
+logger -t egpu-pcie-recover "endpoint NAO enumerado apos $TENTATIVAS tentativas"
+exit 0

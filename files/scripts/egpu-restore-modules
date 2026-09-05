@@ -1,0 +1,13 @@
+#!/bin/sh
+# Repoe os modulos NVIDIA patcheados a partir do backup.
+set -eu
+KREL=$(uname -r)
+BK=/root/egpu-backup/nvidia-modules-$KREL.tar.gz
+if [ ! -f "$BK" ]; then
+    echo "Sem backup para o kernel $KREL em $BK"
+    echo "Os modulos precisam ser recompilados a partir de ~/egpu-nvidia-580.142-full"
+    exit 1
+fi
+tar xzf "$BK" -C "/lib/modules/$KREL"
+depmod -a "$KREL"
+echo "Modulos repostos e depmod refeito para $KREL."

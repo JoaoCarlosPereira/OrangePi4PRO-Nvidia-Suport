@@ -1,0 +1,6 @@
+[Unit]
+Description=Reverte a saida de video pela eGPU quando o lightdm falha
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-video-disable --auto

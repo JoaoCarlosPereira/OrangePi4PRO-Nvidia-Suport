@@ -1,0 +1,28 @@
+#!/bin/sh
+# Sem argumentos: desliga a eGPU como saida de video, permanentemente.
+# Com --auto (watchdog/rollback): desliga so neste boot; o egpu-video-apply
+# volta a ligar no proximo boot se a GPU estiver funcional.
+set -eu
+
+AUTO=0
+if [ "${1:-}" = "--auto" ]; then AUTO=1; fi
+
+MUDOU=0
+if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
+    rm -f /etc/X11/xorg.conf
+    MUDOU=1
+fi
+
+if [ "$AUTO" -eq 0 ]; then
+    sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=no/' /etc/default/egpu-video
+    echo "Desativado permanentemente. Aplique com: systemctl restart lightdm"
+    exit 0
+fi
+
+# Caminho automatico: nao mexe na intencao do usuario.
+if [ "$MUDOU" -eq 0 ]; then
+    exit 0
+fi
+logger -t egpu-video "fallback automatico neste boot; sera reativado no proximo"
+systemctl reset-failed lightdm.service || true
+systemctl restart lightdm.service || true

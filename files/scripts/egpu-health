@@ -1,0 +1,50 @@
+#!/bin/sh
+# Verifica se a pilha da eGPU continua integra. Sai 0 se sim.
+# Com --repair, tenta repor os modulos do backup.
+set -eu
+
+REPAIR=0
+[ "${1:-}" = "--repair" ] && REPAIR=1
+
+KREL=$(uname -r)
+FALHAS=0
+aviso() { echo "FALHA: $1"; logger -t egpu-health "FALHA: $1"; FALHAS=$((FALHAS+1)); }
+
+# 1. Modulos presentes para o kernel em execucao?
+if [ ! -f "/lib/modules/$KREL/extra/nvidia.ko" ]; then
+    aviso "modulos NVIDIA ausentes para o kernel $KREL"
+    if [ "$REPAIR" -eq 1 ]; then
+        /usr/local/sbin/egpu-restore-modules || true
+    fi
+fi
+
+# 2. Versao do modulo == versao do userspace?
+MOD=$(modinfo -F version nvidia 2>/dev/null || echo "")
+USR=$(cat /sys/module/nvidia/version 2>/dev/null || echo "")
+PKG=$(dpkg-query -W -f='${Version}' nvidia-utils-580 2>/dev/null | cut -d- -f1 || echo "")
+
+if [ -n "$MOD" ] && [ -n "$PKG" ] && [ "$MOD" != "$PKG" ]; then
+    aviso "modulo NVIDIA $MOD nao casa com userspace $PKG"
+fi
+
+# 3. Holds e pin ainda no lugar?
+if ! apt-mark showhold 2>/dev/null | grep -q "^nvidia-utils-580$"; then
+    aviso "apt-mark hold foi removido dos pacotes NVIDIA"
+fi
+if [ ! -f /etc/apt/preferences.d/99-egpu-freeze ]; then
+    aviso "pin do apt (99-egpu-freeze) foi removido"
+fi
+
+# 4. Configuracao canonica presente?
+[ -f /etc/X11/xorg-egpu-nvidia.conf ] || aviso "config canonica do Xorg ausente"
+
+if [ "$FALHAS" -eq 0 ]; then
+    echo "OK: kernel $KREL, modulo NVIDIA ${MOD:-?}, userspace ${PKG:-?}, holds e pin no lugar."
+    [ -n "$USR" ] && echo "    driver carregado: $USR"
+    exit 0
+fi
+
+echo
+echo "$FALHAS problema(s). Reparo dos modulos: sudo egpu-health --repair"
+echo "A saida de video cai para o HDMI do Orange Pi ate isso ser resolvido."
+exit 1

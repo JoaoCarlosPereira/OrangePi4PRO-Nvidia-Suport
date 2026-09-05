@@ -1,0 +1,11 @@
+# The GPU depends on hand-built kernel modules matched to this exact driver
+# version and this exact kernel. Any upgrade breaks the kernel<->userspace pair.
+# To upgrade deliberately: remove this file AND run apt-mark unhold.
+
+Package: nvidia-* libnvidia-* xserver-xorg-video-nvidia-*
+Pin: release *
+Pin-Priority: -1
+
+Package: linux-image-current-sun60iw2 linux-dtb-current-sun60iw2
+Pin: release *
+Pin-Priority: -1

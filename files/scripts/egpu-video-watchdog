@@ -1,0 +1,33 @@
+#!/bin/sh
+# Reverte a saida de video pela eGPU se o servidor X nao estiver respondendo.
+set -eu
+
+# So age se a configuracao da eGPU estiver ativa.
+if [ ! -f /etc/X11/xorg.conf ] || ! grep -q egpu-layout /etc/X11/xorg.conf; then
+    exit 0
+fi
+
+if ! pgrep -x Xorg >/dev/null 2>&1; then
+    logger -t egpu-video-watchdog "Xorg nem esta rodando"
+    /usr/local/sbin/egpu-video-disable --auto
+    exit 0
+fi
+
+# O X responde a uma consulta simples?
+for tentativa in 1 2 3; do
+    if XAUTHORITY=/var/run/lightdm/root/:0 timeout 10 xdpyinfo -display :0 >/dev/null 2>&1; then
+        logger -t egpu-video-watchdog "X respondendo normalmente na eGPU"
+        exit 0
+    fi
+    sleep 10
+done
+
+logger -t egpu-video-watchdog "X travado ou sem resposta -- revertendo para o HDMI do Orange Pi"
+
+# O Xorg travado ignora SIGTERM; mata direto antes de reverter.
+systemctl stop lightdm.service >/dev/null 2>&1 || true
+sleep 3
+pkill -9 -x Xorg >/dev/null 2>&1 || true
+sleep 2
+
+/usr/local/sbin/egpu-video-disable --auto

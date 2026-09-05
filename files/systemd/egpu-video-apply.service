@@ -1,0 +1,13 @@
+[Unit]
+Description=Aplica a saida de video pela eGPU quando ela esta disponivel
+After=egpu-pcie-recover.service
+Wants=egpu-pcie-recover.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-video-apply
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

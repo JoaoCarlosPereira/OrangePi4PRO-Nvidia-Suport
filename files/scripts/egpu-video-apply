@@ -1,0 +1,45 @@
+#!/bin/sh
+# Decide, a cada boot, se o X sobe na eGPU. Roda depois da recuperacao da PCIe
+# e antes do display manager.
+set -eu
+
+CANON=/etc/X11/xorg-egpu-nvidia.conf
+LIVE=/etc/X11/xorg.conf
+GPU=/sys/bus/pci/devices/0000:01:00.0
+
+fallback() {
+    if [ -f "$LIVE" ] && grep -q egpu-layout "$LIVE"; then
+        rm -f "$LIVE"
+    fi
+    logger -t egpu-video-apply "$1 -- desktop no HDMI do Orange Pi neste boot"
+    exit 0
+}
+
+EGPU_VIDEO=no
+[ -f /etc/default/egpu-video ] && . /etc/default/egpu-video
+
+[ "$EGPU_VIDEO" = "yes" ] || fallback "desativado em /etc/default/egpu-video"
+[ -f "$CANON" ]           || fallback "config canonica ausente"
+[ -e "$GPU" ]             || fallback "GPU nao enumerada na PCIe"
+
+# Carregar os modulos AQUI, e nao via modules-load.d, garante que so tentamos
+# depois que o egpu-pcie-recover teve chance de trazer o endpoint de volta.
+modprobe nvidia          || fallback "modprobe nvidia falhou"
+modprobe nvidia_modeset  || fallback "modprobe nvidia_modeset falhou"
+modprobe nvidia_drm modeset=1 || fallback "modprobe nvidia_drm falhou"
+
+nvidia-smi >/dev/null 2>&1 || fallback "nvidia-smi nao responde"
+
+# Esperar o no KMS da GPU aparecer antes de liberar o display manager.
+i=0
+while [ "$i" -lt 15 ]; do
+    if [ -n "$(ls -d "$GPU"/drm/card* 2>/dev/null)" ]; then
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+[ -n "$(ls -d "$GPU"/drm/card* 2>/dev/null)" ] || fallback "no KMS nao apareceu"
+
+install -m 644 "$CANON" "$LIVE"
+logger -t egpu-video-apply "eGPU pronta -- X vai subir na RTX 3050"

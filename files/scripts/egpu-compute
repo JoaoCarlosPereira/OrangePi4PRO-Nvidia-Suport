@@ -1,0 +1,7 @@
+#!/bin/sh
+# Carrega apenas os modulos necessarios para computacao na eGPU.
+# NAO carrega nvidia_modeset/nvidia_drm (esses quebram o servidor X).
+set -eu
+modprobe nvidia
+modprobe nvidia_uvm
+nvidia-smi

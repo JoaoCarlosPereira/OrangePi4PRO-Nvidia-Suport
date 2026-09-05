@@ -1,0 +1,29 @@
+#!/bin/sh
+# Checagem NAO destrutiva: carrega os modulos de display da NVIDIA e mostra
+# quais conectores de video a 3050 expoe. Nao mexe na sessao grafica atual.
+set -eu
+
+if [ ! -e /sys/bus/pci/devices/0000:01:00.0 ]; then
+    echo "FALHA: a GPU nao esta enumerada no PCIe."
+    echo "       Tente: sudo egpu-pcie-recover  (ou desligue e religue a fonte da eGPU)"
+    exit 1
+fi
+
+modprobe nvidia
+modprobe nvidia_modeset
+modprobe nvidia_drm modeset=1
+sleep 2
+
+echo "=== nvidia-smi ==="
+nvidia-smi -L || echo "  (nvidia-smi falhou)"
+
+echo
+echo "=== conectores DRM ==="
+for c in /sys/class/drm/card*-*; do
+    [ -e "$c/status" ] || continue
+    printf '  %-24s %s\n' "$(basename "$c")" "$(cat "$c/status")"
+done
+
+echo
+echo "Conectores card1-*/card2-* sao da NVIDIA. Se algum estiver 'connected',"
+echo "a saida de video da 3050 esta pronta: rode  sudo egpu-video-enable"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Verifica a integridade da pilha da eGPU
+After=egpu-video-apply.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-health
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

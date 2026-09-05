@@ -1,0 +1,5 @@
+*.img
+*.img.xz
+*.img.xz.*
+*.dtbo
+*.sha256
