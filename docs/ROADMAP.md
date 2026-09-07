@@ -7,17 +7,19 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 ## Phase 0 — Consolidate Gen2 (low risk)
 
 > **Status 2026-09-08.** Step 1 done: the v1.2 image is built, sanitised,
-> verified and split, ready to publish (`docs/RELEASE-NOTES-v1.2.md`). Step 2 in
-> progress: the kernel cross-compiles cleanly with GCC 11.5 (same module set and
-> vermagic as the card), but the first build **did not boot** on the test card.
-> The only material difference from the vendor binary was `CONFIG_RELR=y`
-> (RELR relocation packing, auto-enabled because the host linker supports it;
-> the vendor toolchain did not). A relink without RELR gives an `Image` within
-> 2 KB of the vendor's size; a second rebuild with the exact Arm GNU Toolchain
-> 11.2-2022.02 (GCC 11.2.1, binutils 2.37, no RELR) also completed with the
-> same 319 modules and vermagic. Both candidates are staged on the PC and wait
-> for the test card (`/home/joao/kernel-build/fix-testcard.sh`). Lesson: match
-> the vendor's linker, not just the compiler series.
+> verified and split, ready to publish (`docs/RELEASE-NOTES-v1.2.md`). Step 2:
+> the kernel cross-compiles cleanly (same 319 modules and vermagic as the card),
+> but three test boots failed — because the `uImage` had been wrapped with
+> `mkimage -A arm64`. The A733's vendor U-Boot is 32-bit and its `bootm`
+> silently rejects a legacy image tagged AArch64; the vendor wraps the arm64
+> `Image` with **`-A arm`**. RELR packing and the toolchain were red herrings,
+> although the final build uses the exact Arm GNU Toolchain 11.2-2022.02 with
+> RELR off to stay byte-for-byte comparable. A second real finding: the DTB in
+> `/boot` (built July) differs in 648 lines from the one compiled from the
+> GitHub tree (April): CPU OPP tables, GPU power domain, USB `res_dcap` clocks.
+> The public tree is not the tree that built the shipped kernel, so a rebuilt
+> kernel must ship with its own DTB (matched pair), which the eGPU overlays
+> apply to unchanged.
 
 1. **Ship a new image from the board's current state.** The published release
    still carries the Gen1 overlay. Same process as before: shrink, sanitise with
