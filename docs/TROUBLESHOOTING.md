@@ -358,6 +358,29 @@ dark — there is nothing else able to drive that output.
 
 Do not chase this as a display bug. Diagnose over SSH, or on the board's HDMI.
 
+### On a first boot, expect minutes — and possibly the wrong output
+
+A freshly flashed card is the slowest case, and the sequence looks like a fault
+even when nothing is wrong:
+
+```
+dark screen  ->  ~3 min filesystem expansion  ->  board reboots itself
+             ->  dark screen again  ->  up to 25 s of PCIe retries
+             ->  up to 8 s waiting for hot-plug detect  ->  lightdm
+```
+
+If it ends with a desktop on the **Orange Pi HDMI** instead of the card, the
+endpoint did not enumerate and the fallback did its job:
+
+```bash
+egpu-video-check
+journalctl -u egpu-pcie-recover -b     # "endpoint NAO enumerado apos 5 tentativas"
+```
+
+The fix is not software. Cut mains power to the GPU's PSU for ~10 s and boot
+again — a warm reset leaves the card powered and half-initialised, and it will
+refuse to train the link no matter how many times the controller is rebound.
+
 ---
 
 ## The desktop wedges under use, and `nvidia-smi` says `[GPU requires reset]`

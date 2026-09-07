@@ -1,0 +1,17 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Orange Pi 4 Pro (Allwinner A733): run the single PCIe lane at Gen2 (5 GT/s).
+ * The vendor default is Gen3; use this only if Gen3 turned out to be
+ * electrically unstable with your riser (see docs/PCIE-LINK-SPEED.md).
+ * Replaces egpu-pcie-gen1 -- never load both.
+ */
+/ {
+    fragment@0 {
+        target-path = "/soc@3000000/pcie@6000000";
+        __overlay__ {
+            max-link-speed = <2>;
+        };
+    };
+};

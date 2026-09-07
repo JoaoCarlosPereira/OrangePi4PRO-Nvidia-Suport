@@ -160,6 +160,38 @@ So if Xorg fails, the GPU monitor goes dark and stays dark. That is not a new
 fault — it is the absence of anything else able to drive that output. Recover
 over SSH or on the board's HDMI.
 
+#### The first boot is much slower, and may not reach the GPU at all
+
+Budget several minutes before anything appears, and **do not treat the wait as a
+failure**. Three things run before the display manager, each with a worst case:
+
+| Stage | Worst case | Where the number comes from |
+|---|---|---|
+| Root filesystem expansion | ~3 min, **plus one automatic reboot** | the vendor's `orangepi-resize-filesystem.service` — its own header says it "may block the boot process for up to 3 minutes", and it carries `TimeoutStartSec=6min` |
+| PCIe endpoint retries | 25 s — 5 attempts of unbind, 2 s, bind, 3 s | `egpu-pcie-recover`, unit timeout 60 s |
+| Connector detection | 8 s — hot-plug detect can lag the first modeset | `egpu-video-apply`, unit timeout 120 s |
+
+All three sit `Before=display-manager.service`, so they hold the desktop back
+rather than racing it. The reboot in the middle is the part that alarms people:
+the screen has been dark for a minute, the board restarts on its own, and the
+dark period starts over.
+
+**And the first boot can legitimately end with no video on the card.** PCIe
+enumeration on this board is intermittent (see *Known limitations*). If the
+endpoint does not appear after all five retries, `egpu-video-apply` falls back to
+the Orange Pi HDMI by design — that is the fallback working, not a bug. You get a
+desktop, just on the wrong output.
+
+```bash
+egpu-video-check        # did the endpoint enumerate? what did the boot decide?
+journalctl -u egpu-pcie-recover -u egpu-video-apply -b
+```
+
+If it fell back, **cut mains power to the GPU's PSU for about 10 s** and boot
+again. A warm reset alone does not recover a card that failed to train — that is
+documented under *Known limitations*, and it is the single most common reason a
+first boot disappoints.
+
 ### Wayland
 
 Wayland works — GNOME 50 and Plasma 6 both render on the eGPU. Getting there
@@ -437,8 +469,11 @@ directly.
 
 **First boot:**
 
-1. The root filesystem expands to fill the card, then the board reboots once.
-   This can add a minute or two.
+1. The root filesystem expands to fill the card, then **the board reboots by
+   itself**. Together with the PCIe and connector waits, budget **up to about
+   four minutes of dark screen** on this first boot, spanning a reboot you did
+   not ask for. This is normal. See *"The first boot is much slower"* above for
+   the breakdown, and for what to do if it ends up on the wrong output.
 2. It logs straight into XFCE as **`orangepi`**, password **`orangepi`**.
    **Change it before putting the board on a network you do not control** —
    `passwd`. The `root` account is locked, as on a normal Ubuntu; use `sudo`.
