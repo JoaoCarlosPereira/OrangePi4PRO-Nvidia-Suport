@@ -316,6 +316,42 @@ Prevent it: install `regen-ssh-host-keys.service` (see the tutorial, §5.3).
 
 ---
 
+## EGL or GBM cannot open the GPU: "Permission denied"
+
+```
+libEGL warning: failed to open /dev/dri/card2: Permission denied
+(udev-worker): card2: Failed to apply ACL: Operation not supported
+```
+
+The vendor kernel is built **without `CONFIG_TMPFS_POSIX_ACL`**:
+
+```bash
+grep TMPFS_POSIX_ACL /boot/config-$(uname -r)
+# CONFIG_TMPFS_POSIX_ACL is not set
+```
+
+`devtmpfs` therefore cannot store POSIX ACLs, and systemd's `uaccess` tagging —
+the normal mechanism that grants the logged-in user access to the GPU — fails
+silently every boot. Access falls back entirely to group membership.
+
+This is easy to miss because the two nodes have **different groups**:
+
+```
+crw-rw---- root video   /dev/dri/card2
+crw-rw---- root render  /dev/dri/renderD129
+```
+
+Most users are already in `video`, so KMS works and the desktop appears — but
+`render` is usually missing, and without the render node EGL and GBM fail. Fix:
+
+```bash
+sudo usermod -aG video,render "$USER"
+```
+
+Then **log out and back in** — group changes only apply to new sessions.
+
+---
+
 ## After an upgrade
 
 ```bash

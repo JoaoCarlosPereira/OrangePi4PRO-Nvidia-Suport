@@ -111,6 +111,20 @@ if [ -n "$PKGS$KERN" ]; then
     apt-mark hold $PKGS $KERN >/dev/null 2>&1 && say "apt-mark hold applied"
 fi
 
+echo "== GPU device access =="
+# O kernel vendor e compilado sem CONFIG_TMPFS_POSIX_ACL, entao devtmpfs nao
+# guarda ACLs e o mecanismo uaccess do systemd falha:
+#   (udev-worker): card2: Failed to apply ACL: Operation not supported
+# Sem ACL, o acesso a GPU depende inteiramente de grupo. E facil passar
+# desapercebido porque card2 e root:video (o usuario normalmente esta em
+# video) mas renderD* e root:render -- e sem o render node o EGL/GBM falha.
+for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do
+    if usermod -aG video,render "$u" 2>/dev/null; then
+        say "$u -> grupos video, render"
+    fi
+done
+say "(mudanca de grupo vale a partir do proximo login)"
+
 echo "== Module backup =="
 mkdir -p /root/egpu-backup
 if [ -f "/lib/modules/$KREL/extra/nvidia.ko" ]; then
