@@ -16,6 +16,7 @@
 #
 # The target disk is wiped: GPT, one ext4 partition, exclusively for the system.
 set -euo pipefail
+LOG=/var/log/egpu-install-to-disk.log
 YES=0; REBOOT=1; TARGET=""; MODE=install
 for a in "$@"; do case $a in --yes) YES=1;; --no-reboot) REBOOT=0;; --list) MODE=list;; --revert) MODE=revert;; /dev/*) TARGET=$a;; *) echo "unknown argument $a"; exit 1;; esac; done
 [ "$MODE" = list ] || [ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
@@ -44,6 +45,7 @@ case $MODE in
         echo "rootdev restored to the boot medium ($BOOTUUID). Reboot to run from it again."; exit 0;;
 esac
 
+exec > >(tee -a "$LOG") 2>&1; echo "== $(date) $0 $*"
 [ -n "$TARGET" ] || { echo "no target disk given; use --list"; exit 1; }
 [ -b "$TARGET" ] || { echo "$TARGET is not a block device"; exit 1; }
 [ "$(lsblk -dn -o TYPE "$TARGET")" = disk ] || { echo "$TARGET is not a whole disk"; exit 1; }
@@ -62,10 +64,14 @@ PART=$(lsblk -ln -o NAME,TYPE "$TARGET" | awk '$2=="part"{print "/dev/"$1}' | he
 mkfs.ext4 -q -F -L opi-root "$PART"; NEWUUID=$(blkid -s UUID -o value "$PART")
 echo "partition   : $PART  UUID $NEWUUID"
 
-# 2. copy
+# 2. copy (rsync 23/24 = some files vanished or lost attributes while the system runs; not fatal)
 M=/mnt/egpu-target; mkdir -p $M; mount "$PART" $M
+trap 'echo "FAILED at line $LINENO -- see $LOG"; umount $M 2>/dev/null || true' ERR
+set +e
 rsync -aHAXx --numeric-ids --info=progress2 \
       --exclude={/dev/*,/proc/*,/sys/*,/run/*,/tmp/*,/mnt/*,/media/*,/lost+found,/var/tmp/*,/swapfile} / $M/
+RC=$?; set -e
+case $RC in 0|23|24) ;; *) echo "rsync failed with code $RC"; umount $M; exit 1;; esac
 mkdir -p $M/{dev,proc,sys,run,tmp,mnt,media/bootfs,boot}
 # /boot on the target is only a mount point; U-Boot reads the boot medium's copy
 if [ "$BOOTFS_MNT" != / ]; then rsync -a "$BOOTFS_MNT/boot/" $M/boot.fallback/ 2>/dev/null || true; fi

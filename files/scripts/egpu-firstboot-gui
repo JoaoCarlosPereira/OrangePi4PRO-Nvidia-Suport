@@ -15,12 +15,12 @@ command -v zenity >/dev/null || exit 0
 # still the default there is nothing to protect by prompting for it, so use it silently;
 # once the user has changed it, sudo asks in the terminal as usual.
 DEFAULT_PW=orangepi
+ASK=${XDG_RUNTIME_DIR:-/tmp}/egpu-askpass; SUDO="sudo"
 if printf '%s\n' "$DEFAULT_PW" | sudo -S -k -p '' true 2>/dev/null; then
-    SUDO="printf '%s\\n' $DEFAULT_PW | sudo -S -p ''"
-else
-    SUDO="sudo"
+    ( umask 077; printf '#!/bin/sh\necho %s\n' "$DEFAULT_PW" > "$ASK" ); chmod 700 "$ASK"
+    SUDO="SUDO_ASKPASS=$ASK sudo -A"
 fi
-as_root() { if [ "$SUDO" = sudo ]; then pkexec "$@"; else printf '%s\n' "$DEFAULT_PW" | sudo -S -p '' "$@"; fi; }
+as_root() { if [ "$SUDO" = sudo ]; then pkexec "$@"; else SUDO_ASKPASS=$ASK sudo -A "$@"; fi; }
 LIST=$(/usr/local/sbin/egpu-install-to-disk --list 2>/dev/null)
 BOOT=$(echo "$LIST" | sed -n 's/^boot medium: \(\/dev\/[a-z0-9]*\).*/\1/p')
 mapfile -t CANDS < <(echo "$LIST" | awk -F'|' '/^  \/dev/ {gsub(/^ +/,"",$1); print}')
@@ -42,11 +42,11 @@ case "$RAW" in
   *"Return to the system"*)
     zenity --question --title="Confirm" --text="The next boot runs from $BOOT again.\nThe disk keeps its copy; choose it here later to switch back.\n\nReboot now?" 2>/dev/null || exit 0
     TERM_CMD=$(command -v xfce4-terminal || command -v x-terminal-emulator || command -v gnome-terminal)
-    $TERM_CMD -e "sh -c '$SUDO /usr/local/sbin/egpu-install-to-disk --revert && $SUDO systemctl reboot'" 2>/dev/null & wait;;
+    $TERM_CMD -e "sh -c \"$SUDO /usr/local/sbin/egpu-install-to-disk --revert && $SUDO systemctl reboot\"" 2>/dev/null & wait;;
   *"Install the system"*)
     zenity --question --title="Confirm" --text="ALL DATA ON $DEV WILL BE ERASED.\n\nThe system is copied there and the board reboots into it.\n$BOOT stays as boot medium and fallback." 2>/dev/null || exit 0
     TERM_CMD=$(command -v xfce4-terminal || command -v x-terminal-emulator || command -v gnome-terminal)
-    $TERM_CMD -e "sh -c '$SUDO /usr/local/sbin/egpu-install-to-disk --yes $DEV || { echo; echo install failed, press Enter; read x; }'" 2>/dev/null &
+    $TERM_CMD -e "sh -c \"$SUDO /usr/local/sbin/egpu-install-to-disk --yes $DEV || { echo; echo install failed - see /var/log/egpu-install-to-disk.log - press Enter; read x; }\"" 2>/dev/null &
     wait;;
 esac
 as_root sh -c "mkdir -p /var/lib/egpu; touch $FLAG" 2>/dev/null
