@@ -7,8 +7,8 @@ W=${1:-$HOME/uboot-build}; mkdir -p "$W"; cd "$W"
 [ -d u-boot-orangepi ] || git clone --depth 1 --branch v2018.05-sun60iw2 https://github.com/orangepi-xunlong/u-boot-orangepi.git
 [ -d orangepi-build ] || git clone --depth 1 https://github.com/orangepi-xunlong/orangepi-build.git
 cd u-boot-orangepi
-sed -i 's/^\(\s*\)-Werror$/\1-Wno-error/' Makefile                       # build with a modern GCC
-sed -i 's/pcie3v3_supply = "dc1sw2";/pcie3v3_supply = "dc1sw1";/' arch/arm/dts/board-uboot.dts
+# -Wno-error (modern GCC), pcie3v3_supply=dc1sw1 (M.2 rail), USB1 VBUS on PB7 active-low (Type-A ports)
+git checkout -q -- . && patch -p1 < "$(dirname "$(readlink -f "$0")")/../../files/uboot/u-boot-orangepi4pro.patch"
 make sun60iw2p1_t736_defconfig CROSS_COMPILE=arm-linux-gnueabi- >/dev/null
 make -j"$(nproc)" CROSS_COMPILE=arm-linux-gnueabi- >/dev/null 2>&1 || true   # the final `cp` to / fails harmlessly
 [ -f u-boot.bin ] && [ -f dts/dt.dtb ] || { echo "u-boot build failed"; exit 1; }

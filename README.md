@@ -438,8 +438,8 @@ Orange Pi image:
 | PCIe link to the GPU | not enumerated | Gen2 x1, overlays installed |
 | NVIDIA 580.142 open modules for a non-coherent Arm | — | built and pinned |
 | Kernel | vendor | rebuilt: measured link speed in the log, NSI cap lifted (`kernel-*.tar.gz` asset, optional) |
-| U-Boot | M.2 rail bug (`dc1sw2`) | fixed package in the card's boot area and in the `.deb` orangepi-config uses; SPI NOR on request |
-| Boot without microSD | no | see [docs/BOOT-WITHOUT-SD.md](docs/BOOT-WITHOUT-SD.md) |
+| U-Boot | M.2 rail bug (`dc1sw2`), Type-A ports unpowered at boot | fixed package (rail + USB VBUS) in the card's boot area and in the `.deb` orangepi-config uses; SPI NOR on request |
+| Boot without microSD | no | yes, from USB in a Type-A port — [docs/BOOT-WITHOUT-SD.md](docs/BOOT-WITHOUT-SD.md) |
 | Output selection, watchdogs, SSH hardening, `egpu-*` tools | — | installed by `install.sh` |
 
 

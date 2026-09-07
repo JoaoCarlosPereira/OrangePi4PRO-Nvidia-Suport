@@ -5,6 +5,10 @@ from a USB drive (or an NVMe SSD in the M.2 slot) you keep **U-Boot in the SPI
 NOR** and put the root filesystem on the other medium. Two things stood in the
 way on the stock image, both fixed here:
 
+0. The vendor U-Boot leaves the two USB Type-A ports **unpowered**: it drives
+   reference-board VBUS pins (`PL5`/`PL6`) while this board's Type-A VBUS enable
+   is `PB7`, active-low. A stick in a Type-A port has its LED off during U-Boot
+   and `usb start` finds nothing. Fixed in `files/uboot/boot_package-dc1sw1.fex`.
 1. The vendor U-Boot switches on the wrong 3.3 V rail for the M.2 slot
    (`dc1sw2`, the slot is on `dc1sw1`), so an NVMe drive is invisible to it.
    `files/uboot/boot_package-dc1sw1.fex` is the vendor U-Boot rebuilt with the
@@ -49,7 +53,15 @@ target USB or NVMe) once `egpu-install-uboot deb` has been run.
 ## Status
 
 - Rebuilt U-Boot boots from the SD boot area and from the SPI NOR: verified.
-- Boot from USB with no microSD present: **test in progress** (2026-09-08).
+- Boot from USB with no microSD present: **verified 2026-09-08** — SanDisk
+  Cruzer Glide 16 GB in a Type-A port, root on `/dev/sda1`, filesystem expanded
+  on first boot, PCIe Gen2 and the desktop on the RTX 3050 as on microSD.
+
+Two things that cost a failed attempt each: the stick must be in a **Type-A**
+port (the USB-C port is XHCI, invisible to this U-Boot — on this board the
+keyboard and mouse usually occupy both Type-A ports, so unplug one), and the
+U-Boot must carry the PB7 VBUS fix above. With neither logo nor LED you cannot
+tell those apart from a dead SPI; the SPI was fine all along.
 
 ## Recovery
 

@@ -81,8 +81,9 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 > the same `boot_package.fex` (1392640 bytes) is now in the **SPI NOR at
 > 0x40000**, readback-verified, with the vendor `boot0` at offset 0 untouched
 > and a full 16 MiB dump kept in `orangepi-backup/testcard-backup/spinor.bin`.
-> Not yet exercised: booting from the SPI U-Boot with no microSD present
-> (needs a rootfs on USB or NVMe). Caveat: the public U-Boot tree is from
+> Booting from the SPI U-Boot with no microSD present is **verified** with a USB
+> stick in a Type-A port; it took a second U-Boot fix (Type-A VBUS enable on
+> PB7, active-low — stock U-Boot leaves the ports unpowered). Step 9 done. Caveat: the public U-Boot tree is from
 > March 2026 while the vendor binary on the cards is from July; nothing broke
 > on SD boot, but the July fixes are unknown.
 
