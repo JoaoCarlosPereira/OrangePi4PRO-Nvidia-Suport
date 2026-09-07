@@ -1,11 +1,12 @@
 
-The NSI bandwidth limiter was set from the requested gen (200/400/700
-MB/s) and measured throughput landed exactly on it (199 MB/s at Gen1,
-398 MB/s at Gen2). One lane cannot exceed ~985 MB/s, so give every gen
-the Gen3 budget. Measured after the change: 204-209 MB/s at Gen1.
+On the "already link up" path (the bootloader trained the link first),
+wait for the renegotiation that setup_rc() requests and for LnkSta to
+settle on the target before logging; DIRECT_SPEED_CHANGE self-clears when
+the LTSSM enters Recovery, not when the new rate is established, and a
+bootloader-trained Gen3 link takes about 15 ms to drop to Gen1.
 ---
 diff --git a/bsp/drivers/pcie/pcie-sunxi-rc.c b/bsp/drivers/pcie/pcie-sunxi-rc.c
-index de5ae184d..c940975de 100644
+index de5ae184d..833db4e1e 100644
 --- a/bsp/drivers/pcie/pcie-sunxi-rc.c
 +++ b/bsp/drivers/pcie/pcie-sunxi-rc.c
 @@ -609,7 +609,7 @@ static int sunxi_pcie_host_wait_for_speed_change(struct sunxi_pcie *pci)
@@ -43,19 +44,30 @@ index de5ae184d..c940975de 100644
  			nsi_port_set_abs_bwlen(i, false);
  			nsi_port_set_abs_bwl(i, bwl);
  			nsi_port_set_abs_bwlen(i, true);
-@@ -651,15 +648,17 @@ int sunxi_pcie_host_read_speed(struct sunxi_pcie *pci)
+@@ -651,15 +648,28 @@ int sunxi_pcie_host_read_speed(struct sunxi_pcie *pci)
  {
  	int val, gen;
  
 -	sunxi_pcie_dbi_ro_wr_en(pci);
 -	val = sunxi_pcie_readl_dbi(pci, LINK_CONTROL2_LINK_STATUS2);
 -	gen = val & 0xf;
++	int target, retries;
++
 +	/*
 +	 * The negotiated speed is LnkSta.CurrentLinkSpeed. LnkCtl2[3:0] is the
 +	 * *target* we just programmed, so reading it back only echoes the request.
++	 * DIRECT_SPEED_CHANGE self-clears when the LTSSM enters Recovery, not when
++	 * the new rate is established, so give LnkSta a moment to settle on the
++	 * target (a bootloader-trained Gen3 link takes ~15 ms to drop to Gen1).
 +	 */
-+	val = sunxi_pcie_readl_dbi(pci, LINK_CONTROL_LINK_STATUS);
-+	gen = (val >> PCIE_LNKSTA_SHIFT) & PCIE_LNKSTA_CLS_MASK;
++	target = sunxi_pcie_readl_dbi(pci, LINK_CONTROL2_LINK_STATUS2) & 0xf;
++	for (retries = 0; retries < 40; retries++) {
++		val = sunxi_pcie_readl_dbi(pci, LINK_CONTROL_LINK_STATUS);
++		gen = (val >> PCIE_LNKSTA_SHIFT) & PCIE_LNKSTA_CLS_MASK;
++		if (gen == target)
++			break;
++		usleep_range(4000, 5000);
++	}
  
  	sunxi_info(pci->dev, "PCIe speed of Gen%d\n", gen);
  	sunxi_pcie_host_change_nsi_port_bwl(pci, gen);
@@ -66,7 +78,7 @@ index de5ae184d..c940975de 100644
  }
  
  int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
-@@ -682,12 +681,11 @@ int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
+@@ -682,12 +692,11 @@ int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
  	sunxi_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
  
  	ret = sunxi_pcie_host_wait_for_speed_change(pci);
@@ -84,6 +96,19 @@ index de5ae184d..c940975de 100644
  
  	sunxi_pcie_dbi_ro_wr_dis(pci);
  	return 0;
+@@ -717,6 +726,12 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
+ 	if (sunxi_pcie_host_is_link_up(pp)) {
+ 		sunxi_info(pci->dev, "pcie is already link up\n");
+ 
++		/*
++		 * The link was trained by the bootloader. setup_rc() has just
++		 * programmed our target speed and pulsed DIRECT_SPEED_CHANGE, so
++		 * let that renegotiation finish before reporting the speed.
++		 */
++		sunxi_pcie_host_wait_for_speed_change(pci);
+ 		sunxi_pcie_host_read_speed(pci);
+ 	} else {
+ 		sunxi_pcie_host_establish_link(pci);
 diff --git a/bsp/drivers/pcie/pcie-sunxi.h b/bsp/drivers/pcie/pcie-sunxi.h
 index 605406ba1..19d0558bd 100644
 --- a/bsp/drivers/pcie/pcie-sunxi.h
