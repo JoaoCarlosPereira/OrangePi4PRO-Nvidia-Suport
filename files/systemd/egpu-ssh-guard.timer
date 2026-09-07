@@ -1,0 +1,13 @@
+[Unit]
+Description=Verifica a porta 22 a cada minuto
+Documentation=file:///usr/local/sbin/egpu-ssh-guard
+
+[Timer]
+# Cedo, mas depois do regen-ssh-host-keys e do apply do video.
+OnBootSec=45s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=egpu-ssh-guard.service
+
+[Install]
+WantedBy=timers.target

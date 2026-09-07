@@ -130,6 +130,36 @@ sudo lspci -vv -s 00:00.0 | grep CESta            # RxErr- means clean
 
 No software setting fixes signal integrity.
 
+### Nothing appears on the GPU until the desktop starts
+
+Expect a **dark monitor for most of the boot**, then the desktop. This is by
+design, and it is the single most common "did it fail?" moment.
+
+The NVIDIA modules are loaded *late*, by `egpu-video-apply`, after PCIe recovery
+has run. Nothing before that point can drive the card:
+
+| Stage | Where it appears |
+|---|---|
+| U-Boot, overlay messages | serial console only |
+| Kernel early console, Plymouth | Orange Pi HDMI |
+| `egpu-video-apply` loads `nvidia_drm` | still nothing on screen |
+| lightdm / Xorg takes the GPU | **first image on the GPU monitor** |
+
+Two consequences worth internalising:
+
+- **You cannot see the boot on the GPU.** If you need to watch a boot fail, watch
+  the board's own HDMI, or the serial console, or read the journal over SSH.
+- **Text consoles are not on the GPU either.** The driver is loaded with
+  `fbdev=0`, so it never claims the framebuffer console — that is deliberate,
+  because `fbdev=1` holds the framebuffer and blocks the graphics server (see the
+  tutorial, §4.1). `fbcon` therefore stays on the SoC's display engine, so
+  Ctrl+Alt+F2 lands on the **Orange Pi HDMI**, not on the monitor attached to the
+  card.
+
+So if Xorg fails, the GPU monitor goes dark and stays dark. That is not a new
+fault — it is the absence of anything else able to drive that output. Recover
+over SSH or on the board's HDMI.
+
 ### Wayland
 
 Wayland works — GNOME 50 and Plasma 6 both render on the eGPU. Getting there
@@ -302,6 +332,46 @@ reads the framebuffer from VRAM locally.
 
 ---
 
+### SSH is the recovery channel, so it is hardened
+
+Everything that breaks on this board breaks the *display*. That makes `sshd` the
+only reliable way in, and it is treated as such.
+
+Ubuntu ships `sshd` socket-activated. That arrangement has a failure mode this
+project hit for real: when `sshd` cannot start — missing host keys after cloning
+a card, a typo in `sshd_config` — `ssh.socket` exhausts its start-rate limit,
+enters `failed`, and **stops listening**. Port 22 then stays shut until someone
+turns up with a keyboard. On a headless board whose display is the broken part,
+that is the worst possible outcome.
+
+The image replaces it with a persistent daemon that does not give up:
+
+- `ssh.socket` disabled, `ssh.service` enabled, with
+  `files/systemd/ssh.service.d/egpu-always.conf`: `Restart=always`,
+  `StartLimitIntervalSec=0`, and — importantly — the factory unit's
+  `ExecStartPre=/usr/sbin/sshd -t` gate and `RestartPreventExitStatus=255` both
+  cleared. Those two turn a bad config into *no SSH at all*, which is precisely
+  the outcome to avoid.
+- `egpu-ssh-guard`, on a 60-second timer, checks for a listener on port 22 by
+  reading `/proc/net/tcp` (no dependency on `ss`, `netstat` or `lsof`). If
+  nothing is listening it escalates: remove `sshd_not_to_be_run`, `ssh-keygen -A`
+  if keys are missing, validate the config and — if `sshd -t` fails — move the
+  drop-ins aside and install a minimal known-good `sshd_config`, then
+  `reset-failed` and start the service. Last resort: a lifeboat `sshd` with keys
+  and config under `/run`, which works even with `/` mounted read-only.
+- The apt hook calls `egpu-ssh-guard --reassert` after every dpkg run, because an
+  `openssh-server` upgrade re-enables `ssh.socket`.
+
+```bash
+sudo egpu-ssh-guard              # force port 22 back up, now
+sudo egpu-ssh-guard --reassert   # re-apply the service-not-socket arrangement
+journalctl -t egpu-ssh-guard     # what it has had to fix
+```
+
+> If the lifeboat ever runs, the host key changes and your client will complain
+> loudly about it. That is the intended trade-off: a fingerprint warning beats a
+> closed port.
+
 ## Hardware
 
 | | |
@@ -367,11 +437,18 @@ directly.
 
 **First boot:**
 
-1. The root filesystem expands to fill the card (this can add up to a minute).
-2. You will be asked to set a new password and create your user.
+1. The root filesystem expands to fill the card, then the board reboots once.
+   This can add a minute or two.
+2. It logs straight into XFCE as **`orangepi`**, password **`orangepi`**.
+   **Change it before putting the board on a network you do not control** —
+   `passwd`. The `root` account is locked, as on a normal Ubuntu; use `sudo`.
 3. **Output selection is automatic.** If a monitor is plugged into the NVIDIA
-   card, the desktop and the text console both go there. If not, they stay on the
-   Orange Pi HDMI. Nothing to configure.
+   card, the desktop goes there; if not, it stays on the Orange Pi HDMI. Nothing
+   to configure.
+4. **Expect the GPU monitor to stay dark until the desktop appears**, and expect
+   text consoles (Ctrl+Alt+F2) to appear on the Orange Pi HDMI, never on the
+   card. Both are by design — see *"Nothing appears on the GPU until the desktop
+   starts"* above.
 
 To re-decide without rebooting — after plugging or unplugging a monitor:
 
@@ -435,7 +512,11 @@ on this specific board, and about the surrounding plumbing that keeps it stable.
 | `modprobe/` | Module options |
 | `systemd/` | Boot-time services: PCIe recovery, conditional apply, watchdog |
 | `scripts/` | `egpu-*` helper commands, including `egpu-link-margin` |
-| `udev/` | DRM device selection for Wayland compositors |
+| `udev/` | DRM device selection for Wayland compositors, and DRM node access |
+| `systemd/ssh.service.d/` | Makes `sshd` a persistent daemon that never gives up |
+| `apt/` | Upgrade shielding: pin, and a post-dpkg hook that re-asserts both |
+| `plasma/` | `KWIN_DRM_DEVICES` for Plasma sessions |
+| `patches/` | The non-coherent Arm patch applied to the NVIDIA modules |
 
 Every one of these is explained in the tutorial. Do not copy them blindly — the
 PCIe addresses come from the A733 manual and are board-specific.
@@ -456,16 +537,63 @@ are completely different diagnoses. Do not conflate them.
 
 ## Known limitations
 
+### Platform
+
 - **PCIe enumeration is intermittent.** Some boots the endpoint simply does not
   appear. A retry service handles most cases; occasionally the GPU's PSU has to be
   power-cycled at the mains.
 - **A warm reset of the SoC wedges the GPU.** It stays powered and half-initialised
   and then refuses to train the link, no matter how many controller rebinds you
   issue. Only cutting power to the card recovers it.
-- **No Plymouth splash.** Module loading was deliberately moved late in boot, so
-  there is no NVIDIA framebuffer when Plymouth starts. Explained in the tutorial.
+- **The link is forced to Gen1 x1.** ~2 Gb/s, and every overlay in this repo
+  assumes it. Whether the board can train higher was never tested — the Gen1
+  overlay was in place from the first successful enumeration onward, so this is
+  an untested constraint, not a measured limit.
 - **Kernel and driver are version-pinned.** The modules are built for exactly
   6.6.98-sun60iw2 and 580.142. Upgrading either breaks the pair.
+
+### Display and boot
+
+- **No image on the GPU until the desktop starts**, and no text console on it
+  ever. See the section above — this is by design, not a fault.
+- **No Plymouth splash.** Module loading was deliberately moved late in boot, so
+  there is no NVIDIA framebuffer when Plymouth starts.
+- **Shutdown is slow.** The GPU wedges during session teardown; the kernel logs
+  `RC watchdog: GPU is probably locked!` at about 7 s per occurrence. A mitigation
+  ships (`egpu-display-unload.service`) but **it did not measurably help** —
+  acting before the display manager stops is probably required. Unresolved.
+
+### GNOME, specifically
+
+GNOME 50 on Wayland *works* — it renders on the eGPU and looks correct — but it
+is **not the recommended desktop on this board**, and the distributed image ships
+XFCE. Everything below was needed to get GNOME as far as it goes:
+
+- **The GBM backend has to be added by hand.** Ubuntu's arm64 `libnvidia-gl-580`
+  omits `libnvidia-allocator`. Without it no Wayland compositor can render on the
+  card. It is proprietary and cannot be redistributed here, so anyone installing
+  GNOME must extract it themselves — see
+  [files/nvidia-extra/README.md](files/nvidia-extra/README.md).
+- **mutter picks the wrong GPU** and dies on the PowerVR unless the udev tags in
+  `61-egpu-mutter-primary.rules` are present.
+- **The GDM greeter cannot open the GPU** on this kernel, because it runs as a
+  transient user and `CONFIG_TMPFS_POSIX_ACL` is not set. Worked around by
+  opening the DRM nodes to `0666` — a real trade-off, documented above.
+- **`rtkit` must be installed** or mutter cannot prioritise its KMS thread.
+- **Appearance does not match a normal GNOME** out of the box. Yaru packages are
+  needed, and if KDE was ever installed, `kde-config-gtk-style` leaves Breeze
+  overrides in `gsettings` and in `~/.config/gtk-{3,4}.0/settings.ini` that have
+  to be removed.
+- **Micro-stutter persists** even with `rtkit` working and the GPU at P0. The
+  compositor also reports `Device '/dev/dri/card2' prefers shadow buffer`.
+- **Sessions wedge under ordinary use** — opening a terminal was enough. This is
+  the `nvidia_drm` flip-event bug documented above; it ends in
+  `[GPU requires reset]` and needs a reboot plus a power cycle of the card.
+  SSH survives, the desktop does not.
+
+If you want Wayland, **Plasma 6 is the better bet** — it hit the flip-event bug
+less often in testing, though it was never stressed as hard as GNOME was. If you
+want reliability, use X11.
 
 ---
 

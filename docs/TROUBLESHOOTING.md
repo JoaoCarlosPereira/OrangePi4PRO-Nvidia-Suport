@@ -296,23 +296,67 @@ $ ping 192.168.2.118      # replies
 $ ssh orangepi@...        # Connection refused
 ```
 
-`sshd` is not listening. The usual cause on a cloned or sanitised image is
-**missing host keys** — `sshd` will not start without them, and nothing on this
-image regenerates them.
+`sshd` is not listening. On this image that should heal itself within a minute —
+`egpu-ssh-guard` runs on a timer and forces the port back open. If it does not,
+the diagnosis matters.
 
-Confirm the board actually finished booting by checking another service; `xrdp`
-listens on **3389** and is a good canary. If 3389 answers, the boot completed and
-only `sshd` is broken.
+**First, confirm the board finished booting.** `xrdp` listens on **3389** and is a
+good canary. If 3389 answers, the boot completed and only `sshd` is broken.
 
-Fix, from a local terminal or over RDP:
+Then, from the board's own HDMI or over RDP:
 
 ```bash
-sudo ssh-keygen -A
-sudo systemctl enable --now ssh
+journalctl -t egpu-ssh-guard          # what the guard tried, and why it failed
+systemctl status ssh.service          # not ssh.socket -- see below
+sudo /usr/local/sbin/egpu-ssh-guard   # run it in the foreground, watch it work
 ```
 
-Prevent it: install `regen-ssh-host-keys.service` (see the tutorial, §5.3).
-`egpu-health` also flags missing host keys.
+### Why this image does not use socket activation
+
+Ubuntu ships `sshd` socket-activated, and that is the trap. If `sshd` fails to
+start, `ssh.socket` exhausts its start-rate limit, enters `failed`, and **stops
+listening entirely** — the port does not reopen on its own, ever. The usual
+trigger is **missing host keys** after cloning or sanitising an image, because
+`sshd` refuses to start without them.
+
+Two things about the factory `ssh.service` make it worse, and both are cleared by
+`files/systemd/ssh.service.d/egpu-always.conf`:
+
+| Factory setting | What it does to you |
+|---|---|
+| `ExecStartPre=/usr/sbin/sshd -t` | a typo in `sshd_config` blocks the start outright |
+| `RestartPreventExitStatus=255` | 255 is exactly what `sshd` returns for a config error, so systemd stops retrying |
+
+So: a single bad line in a config file is enough to close your only recovery
+channel, permanently, with no retry. That is what the hardening exists to
+prevent.
+
+### If the guard reports the lifeboat
+
+```
+egpu-ssh-guard: bote salva-vidas escutando na 22 (chaves em /run/egpu-ssh -- a impressao digital MUDOU)
+```
+
+Your client will refuse to connect with a host-key mismatch warning. That is
+expected: the lifeboat generates a throwaway key under `/run` because `/etc` was
+not usable. Accept the new key, get in, and fix the real problem — the guard
+leaves the broken files next to the originals with a `.quebrado-<timestamp>`
+suffix.
+
+---
+
+## The GPU monitor is dark for most of the boot
+
+Not a fault. The NVIDIA modules load late, so nothing can drive the card until
+lightdm starts. U-Boot and the kernel console go to the board's own HDMI or the
+serial port; Plymouth does not appear on the card at all.
+
+And because the driver is loaded with `fbdev=0`, there is **never** a text console
+on the GPU. `fbcon` stays on the SoC display engine, so Ctrl+Alt+F2 appears on
+the **Orange Pi HDMI**. If Xorg fails, the GPU monitor simply goes dark and stays
+dark — there is nothing else able to drive that output.
+
+Do not chase this as a display bug. Diagnose over SSH, or on the board's HDMI.
 
 ---
 

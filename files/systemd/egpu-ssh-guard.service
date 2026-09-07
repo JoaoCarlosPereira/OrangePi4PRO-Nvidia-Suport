@@ -1,0 +1,12 @@
+[Unit]
+Description=Garante que a porta 22 esteja respondendo
+Documentation=file:///usr/local/sbin/egpu-ssh-guard
+After=network.target
+# Nao declara Requires= de nada: precisa poder rodar mesmo com o resto quebrado.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-ssh-guard
+# Se o proprio guard falhar, isso nao pode derrubar mais nada.
+SuccessExitStatus=0 1
+TimeoutStartSec=90

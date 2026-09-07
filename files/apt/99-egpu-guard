@@ -1,5 +1,11 @@
-// After any dpkg operation, check that the eGPU stack survived.
-// Does not block anything: warns loudly and restores modules if they vanish.
+// Depois de qualquer operacao do dpkg, verifica se a pilha da eGPU sobreviveu.
+// Nao bloqueia nada: avisa alto e restaura os modulos se eles desaparecerem.
 DPkg::Post-Invoke {
     "if [ -x /usr/local/sbin/egpu-health ]; then /usr/local/sbin/egpu-health --repair || echo '*** WARNING: eGPU stack affected. Run: sudo egpu-health ***'; fi";
+
+    // Um upgrade do openssh-server reabilita o ssh.socket e pode remover o
+    // drop-in do ssh.service. Isso reintroduz o modo de falha em que a porta 22
+    // para de escutar de vez -- e o SSH e o unico canal de recuperacao deste
+    // board, porque o que quebra nele e o video. Reaplica o arranjo.
+    "if [ -x /usr/local/sbin/egpu-ssh-guard ]; then /usr/local/sbin/egpu-ssh-guard --reassert || true; fi";
 };

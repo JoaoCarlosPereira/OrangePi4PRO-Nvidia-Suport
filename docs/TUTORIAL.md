@@ -509,13 +509,62 @@ Two nets are therefore needed:
 Whatever you do to this system, **keep `sshd` working**. It is the only recovery
 channel when the display is wrong, and the display is wrong often on this board.
 
-If you ever remove `/etc/ssh/ssh_host_*` — cloning a card, sanitising an image —
-regenerate them explicitly. Nothing on this image does it for you, and `sshd`
-refuses to start without keys, so port 22 silently never opens. Install
-`files/systemd/regen-ssh-host-keys.service`, which runs `ssh-keygen -A` before
-`ssh.service` when the keys are missing.
+Two independent mistakes will take it away from you, and both happened here:
 
-`egpu-health` checks for this too.
+**Missing host keys.** If you ever remove `/etc/ssh/ssh_host_*` — cloning a card,
+sanitising an image — `sshd` refuses to start, so port 22 silently never opens.
+The distro's own `sshd-keygen.service` does not save you: it carries
+`ConditionFirstBoot=yes`, so it only ever tries once, and a negated condition is
+not a failure, so systemd never retries. Install
+`files/systemd/regen-ssh-host-keys.service`, which runs on *any* boot where the
+keys are missing:
+
+```ini
+ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
+Before=ssh.service ssh.socket sshd.service
+ExecStart=/usr/bin/ssh-keygen -A
+```
+
+**Socket activation giving up.** Ubuntu's socket-activated `sshd` stops listening
+for good once `ssh.socket` exhausts its start-rate limit — which is what happens
+when `sshd` keeps failing. Replace it with a persistent daemon:
+
+```bash
+# a) break the Requires= that would drag the socket back in
+sudo rm -f /etc/systemd/system/ssh.service.requires/ssh.socket
+
+# b) Restart=always, no start limit, and remove the two factory settings that
+#    turn a bad config into "no SSH at all"
+sudo install -d /etc/systemd/system/ssh.service.d
+sudo install -m 644 files/systemd/ssh.service.d/egpu-always.conf \
+        /etc/systemd/system/ssh.service.d/
+
+# c) swap socket for service. KillMode=process keeps your current session alive.
+sudo systemctl daemon-reload
+sudo systemctl enable ssh.service
+sudo systemctl disable ssh.socket
+sudo systemctl stop ssh.socket; sudo systemctl start ssh.service
+```
+
+Then add the watchdog, which is the part that actually saves you at 3 a.m.:
+
+```bash
+sudo install -m 755 files/scripts/egpu-ssh-guard /usr/local/sbin/
+sudo install -m 644 files/systemd/egpu-ssh-guard.{service,timer} \
+        /etc/systemd/system/
+sudo systemctl enable --now egpu-ssh-guard.timer
+```
+
+Every 60 s it checks for a listener on port 22 — read straight out of
+`/proc/net/tcp`, so it does not depend on `ss`, `netstat` or `lsof` being
+installed or working — and escalates until something answers: host keys,
+config validation, a minimal known-good `sshd_config`, `reset-failed`, and
+finally a lifeboat `sshd` with keys under `/run` for the case where `/` is
+read-only.
+
+`egpu-health` checks for missing host keys too, and the apt hook calls
+`egpu-ssh-guard --reassert` after every dpkg run, because an `openssh-server`
+upgrade re-enables `ssh.socket` behind your back.
 
 > **Never `pkill` a wedged Xorg on this board.** Stopping lightdm or killing that
 > process froze the machine hard enough to need a physical reset. If you must

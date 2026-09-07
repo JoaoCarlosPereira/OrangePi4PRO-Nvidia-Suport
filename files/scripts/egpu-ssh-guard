@@ -1,0 +1,163 @@
+#!/bin/sh
+# egpu-ssh-guard -- mantem a porta 22 respondendo, custe o que custar.
+#
+# Roda por timer a cada 60 s. Se ha alguem escutando na 22, sai em silencio.
+# Se nao ha, escala:
+#
+#   1. remove /etc/ssh/sshd_not_to_be_run
+#   2. gera as chaves de host se faltarem
+#   3. valida o sshd_config; se estiver quebrado, move os drop-ins para o lado
+#      e instala um minimo conhecidamente bom
+#   4. limpa o estado failed e sobe o ssh.service
+#   5. ultimo recurso: um sshd "bote salva-vidas" com chaves e config em /run,
+#      que funciona mesmo com / montado somente-leitura
+#
+# Por que existe: o unico canal de recuperacao deste board e o SSH, porque o
+# que quebra nele e o video. Um sshd que nao sobe transforma um problema de
+# desktop em uma viagem ate o board com teclado e monitor.
+#
+# Modo --reassert: reaplica o arranjo service-em-vez-de-socket. Chamado pelo
+# hook do apt, porque um upgrade do openssh-server reabilita o ssh.socket.
+
+set -u
+
+TAG=egpu-ssh-guard
+LIFEBOAT=/run/egpu-ssh
+
+log()  { logger -t "$TAG" -p daemon.warning "$*" 2>/dev/null; printf '%s: %s\n' "$TAG" "$*"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Escuta na 22? Lido de /proc para nao depender de ss/netstat/lsof.
+# Em /proc/net/tcp*: $2 = endereco local (hex), $4 = estado (0A = LISTEN).
+escutando_22() {
+    for f in /proc/net/tcp /proc/net/tcp6; do
+        [ -r "$f" ] || continue
+        awk 'NR>1 { split($2,a,":"); if (a[2]=="0016" && $4=="0A") { found=1 } }
+             END { exit !found }' "$f" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+config_minimo() {
+    cat <<'CFG'
+# Minimo conhecidamente bom, instalado pelo egpu-ssh-guard porque o
+# sshd_config anterior nao passou no `sshd -t`. O original esta ao lado,
+# com sufixo .quebrado-<data>. Corrija e remova este arquivo.
+Port 22
+PermitRootLogin prohibit-password
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+CFG
+}
+
+reassert() {
+    # Um upgrade do openssh-server reabilita o ssh.socket. Desfaz isso.
+    # A ordem importa: o [Install] da unidade de fabrica tem
+    # RequiredBy=ssh.service, entao o symlink em ssh.service.requires faz o
+    # ssh.service exigir o socket -- e parar o socket levaria o servico com ele.
+    rm -f /etc/systemd/system/ssh.service.requires/ssh.socket
+    rmdir /etc/systemd/system/ssh.service.requires 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl disable ssh.socket >/dev/null 2>&1 || true
+    systemctl enable ssh.service >/dev/null 2>&1 || true
+    if ! systemctl is-enabled ssh.service >/dev/null 2>&1; then
+        log "ssh.service nao ficou habilitado -- verifique manualmente"
+        return 1
+    fi
+    return 0
+}
+
+if [ "${1:-}" = "--reassert" ]; then
+    [ "$(id -u)" -eq 0 ] || { echo "$TAG: precisa de root" >&2; exit 1; }
+    reassert && log "arranjo ssh.service reaplicado (socket desabilitado)"
+    escutando_22 || { systemctl stop ssh.socket 2>/dev/null; systemctl start ssh.service 2>/dev/null; }
+    exit 0
+fi
+
+# ---- caminho normal: verificar e, se preciso, consertar -------------------
+
+escutando_22 && exit 0
+
+[ "$(id -u)" -eq 0 ] || { echo "$TAG: precisa de root" >&2; exit 1; }
+
+log "nada escutando na porta 22 -- iniciando recuperacao"
+
+# 1. o veto explicito do Debian
+if [ -e /etc/ssh/sshd_not_to_be_run ]; then
+    rm -f /etc/ssh/sshd_not_to_be_run
+    log "removido /etc/ssh/sshd_not_to_be_run"
+fi
+
+# 2. chaves de host
+if ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
+    if ssh-keygen -A >/dev/null 2>&1; then
+        log "chaves de host geradas com ssh-keygen -A"
+    else
+        log "ssh-keygen -A falhou (/etc somente-leitura?)"
+    fi
+fi
+
+# 3. configuracao
+if ! /usr/sbin/sshd -t >/dev/null 2>&1; then
+    ERRO=$(/usr/sbin/sshd -t 2>&1 | head -3)
+    log "sshd_config invalido: $ERRO"
+    STAMP=$(date +%Y%m%d-%H%M%S)
+    # Os drop-ins sao a causa mais provavel; tira-os da frente primeiro.
+    if [ -d /etc/ssh/sshd_config.d ] && ls /etc/ssh/sshd_config.d/*.conf >/dev/null 2>&1; then
+        mkdir -p "/etc/ssh/sshd_config.d.quebrado-$STAMP"
+        mv /etc/ssh/sshd_config.d/*.conf "/etc/ssh/sshd_config.d.quebrado-$STAMP/" 2>/dev/null
+        log "drop-ins movidos para /etc/ssh/sshd_config.d.quebrado-$STAMP"
+    fi
+    if ! /usr/sbin/sshd -t >/dev/null 2>&1; then
+        cp -a /etc/ssh/sshd_config "/etc/ssh/sshd_config.quebrado-$STAMP" 2>/dev/null
+        config_minimo > /etc/ssh/sshd_config
+        log "sshd_config substituido pelo minimo; original em /etc/ssh/sshd_config.quebrado-$STAMP"
+    fi
+fi
+
+# 4. subir pelo systemd
+reassert
+systemctl reset-failed ssh.service ssh.socket sshd.service 2>/dev/null || true
+systemctl stop ssh.socket 2>/dev/null || true
+systemctl start ssh.service 2>/dev/null || true
+
+# O sshd pode levar um instante para fazer o bind.
+i=0
+while [ $i -lt 10 ]; do
+    escutando_22 && { log "porta 22 respondendo de novo via ssh.service"; exit 0; }
+    i=$((i + 1))
+    sleep 1
+done
+
+# 5. bote salva-vidas: nao depende de /etc nem de / gravavel
+log "ssh.service nao subiu -- ativando o bote salva-vidas em /run"
+mkdir -p "$LIFEBOAT" 2>/dev/null || { log "nem /run e gravavel; desisto"; exit 1; }
+chmod 700 "$LIFEBOAT"
+[ -f "$LIFEBOAT/host_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -f "$LIFEBOAT/host_ed25519" 2>/dev/null
+{
+    config_minimo
+    printf 'HostKey %s/host_ed25519\nPidFile %s/sshd.pid\n' "$LIFEBOAT" "$LIFEBOAT"
+} > "$LIFEBOAT/sshd_config"
+
+if have systemd-run; then
+    systemd-run --unit=egpu-ssh-lifeboat --property=Restart=always \
+        --property=RestartSec=3 --collect \
+        /usr/sbin/sshd -D -f "$LIFEBOAT/sshd_config" >/dev/null 2>&1
+else
+    setsid /usr/sbin/sshd -D -f "$LIFEBOAT/sshd_config" >/dev/null 2>&1 &
+fi
+
+i=0
+while [ $i -lt 10 ]; do
+    escutando_22 && { log "bote salva-vidas escutando na 22 (chaves em $LIFEBOAT -- a impressao digital MUDOU)"; exit 0; }
+    i=$((i + 1))
+    sleep 1
+done
+
+log "FALHA: nada consegue escutar na porta 22"
+exit 1

@@ -81,6 +81,44 @@ for u in egpu-pcie-recover.service egpu-video-apply.service \
     systemctl enable "$u" >/dev/null 2>&1 && say "enabled $u"
 done
 
+echo "== SSH a qualquer custo =="
+# O sshd e o unico canal de recuperacao deste board, porque o que quebra nele e
+# o video. A ativacao por socket do Ubuntu tem um modo de falha que ja nos
+# mordeu: se o sshd nao sobe (chaves ausentes num cartao clonado, sshd_config
+# quebrado), o ssh.socket estoura o limite de tentativas, entra em failed e
+# PARA DE ESCUTAR -- e a porta 22 nao volta sem acesso fisico.
+#
+# Troca por um daemon persistente com Restart=always e sem limite, mais um
+# guard por timer que verifica a porta a cada minuto e escala ate conseguir.
+install -d /etc/systemd/system/ssh.service.d
+install -m 644 "$F/systemd/ssh.service.d/egpu-always.conf" /etc/systemd/system/ssh.service.d/
+say "/etc/systemd/system/ssh.service.d/egpu-always.conf"
+
+# O [Install] da unidade de fabrica tem RequiredBy=ssh.service, entao existe um
+# symlink em ssh.service.requires/ que faz o servico EXIGIR o socket -- e parar
+# o socket levaria o servico junto. Remove primeiro.
+rm -f /etc/systemd/system/ssh.service.requires/ssh.socket
+rmdir /etc/systemd/system/ssh.service.requires 2>/dev/null || true
+install -m 644 "$F/systemd/egpu-ssh-guard.service" "$F/systemd/egpu-ssh-guard.timer" \
+        /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable ssh.service >/dev/null 2>&1 && say "ssh.service habilitado"
+systemctl disable ssh.socket >/dev/null 2>&1 && say "ssh.socket desabilitado"
+systemctl enable egpu-ssh-guard.timer >/dev/null 2>&1 && say "egpu-ssh-guard.timer habilitado"
+# KillMode=process mantem as sessoes abertas, entao a troca nao corta quem esta
+# conectado agora. Mesmo assim: o intervalo entre parar o socket e subir o
+# servico e o unico momento em que a porta 22 fica fechada.
+if [ -z "${EGPU_SKIP_SSH_SWITCH:-}" ]; then
+    systemctl stop ssh.socket 2>/dev/null; systemctl start ssh.service 2>/dev/null
+    if /usr/local/sbin/egpu-ssh-guard >/dev/null 2>&1; then
+        say "porta 22 respondendo pelo ssh.service"
+    else
+        say "AVISO: a porta 22 nao respondeu -- rode: sudo egpu-ssh-guard"
+    fi
+else
+    say "troca adiada (EGPU_SKIP_SSH_SWITCH) -- vale no proximo boot"
+fi
+
 echo "== Intent file =="
 if [ ! -f /etc/default/egpu-video ]; then
     cat > /etc/default/egpu-video <<'EOF'
@@ -160,6 +198,7 @@ echo "  sudo systemctl restart lightdm"
 echo
 echo "  sudo egpu-video-check        # what does the GPU see?"
 echo "  sudo egpu-health             # verify the whole stack"
+echo "  sudo egpu-ssh-guard          # force port 22 back up"
 echo
 echo "Overrides: egpu-video-enable (always NVIDIA), egpu-video-disable (always"
 echo "Orange Pi HDMI), egpu-video-auto (back to automatic)."

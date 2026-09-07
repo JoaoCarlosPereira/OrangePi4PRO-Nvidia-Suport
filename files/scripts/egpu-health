@@ -47,6 +47,34 @@ if ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
     fi
 fi
 
+# 5b. O arranjo "SSH a qualquer custo" continua no lugar? Um upgrade do
+#     openssh-server reabilita o ssh.socket, que e justamente o componente que
+#     para de escutar de vez ao estourar o limite de tentativas.
+if [ -f /etc/systemd/system/ssh.service.d/egpu-always.conf ]; then
+    if systemctl is-enabled ssh.socket >/dev/null 2>&1; then
+        aviso "ssh.socket foi reabilitado -- a porta 22 pode fechar de vez"
+        [ "$REPAIR" -eq 1 ] && [ -x /usr/local/sbin/egpu-ssh-guard ] && \
+            /usr/local/sbin/egpu-ssh-guard --reassert >/dev/null 2>&1 || true
+    fi
+    if ! systemctl is-enabled ssh.service >/dev/null 2>&1; then
+        aviso "ssh.service nao esta habilitado"
+        [ "$REPAIR" -eq 1 ] && [ -x /usr/local/sbin/egpu-ssh-guard ] && \
+            /usr/local/sbin/egpu-ssh-guard --reassert >/dev/null 2>&1 || true
+    fi
+fi
+
+# 5c. Alguem escutando de fato na 22? Lido de /proc para nao depender de ss.
+if [ -r /proc/net/tcp ]; then
+    if ! { awk 'NR>1 { split($2,a,":"); if (a[2]=="0016" && $4=="0A") f=1 } END { exit !f }' \
+             /proc/net/tcp 2>/dev/null || \
+           awk 'NR>1 { split($2,a,":"); if (a[2]=="0016" && $4=="0A") f=1 } END { exit !f }' \
+             /proc/net/tcp6 2>/dev/null; }; then
+        aviso "ninguem escutando na porta 22"
+        [ "$REPAIR" -eq 1 ] && [ -x /usr/local/sbin/egpu-ssh-guard ] && \
+            /usr/local/sbin/egpu-ssh-guard >/dev/null 2>&1 || true
+    fi
+fi
+
 if [ "$FALHAS" -eq 0 ]; then
     echo "OK: kernel $KREL, modulo NVIDIA ${MOD:-?}, userspace ${PKG:-?}, holds e pin no lugar."
     [ -n "$USR" ] && echo "    driver carregado: $USR"
