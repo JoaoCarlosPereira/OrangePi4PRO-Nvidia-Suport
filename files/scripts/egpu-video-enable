@@ -1,12 +1,14 @@
 #!/bin/sh
-# Liga a saida de video pela eGPU, de forma permanente.
+# Forca a saida de video pela NVIDIA, mesmo que nenhum monitor seja detectado
+# nela (util para KVM e monitores que nao afirmam HPD quando desligados).
+# Para o comportamento automatico, prefira egpu-video-auto.
 set -eu
 sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=yes/' /etc/default/egpu-video
 /usr/local/sbin/egpu-video-apply
 if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
-    echo "Ativado e persistente. Aplique agora com: systemctl restart lightdm"
+    echo "Forcado para a NVIDIA. Aplique com: systemctl restart lightdm"
 else
-    echo "Marcado como ativo, mas a GPU nao esta pronta neste boot."
-    echo "Veja o motivo com: journalctl -t egpu-video-apply -b"
+    echo "Marcado, mas a GPU nao esta utilizavel neste boot."
+    echo "Motivo: journalctl -t egpu-video-apply -b"
     exit 1
 fi

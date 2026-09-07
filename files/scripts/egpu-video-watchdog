@@ -9,7 +9,7 @@ fi
 
 if ! pgrep -x Xorg >/dev/null 2>&1; then
     logger -t egpu-video-watchdog "Xorg nem esta rodando"
-    /usr/local/sbin/egpu-video-disable --auto
+    /usr/local/sbin/egpu-video-disable --rollback
     exit 0
 fi
 
@@ -30,4 +30,4 @@ sleep 3
 pkill -9 -x Xorg >/dev/null 2>&1 || true
 sleep 2
 
-/usr/local/sbin/egpu-video-disable --auto
+/usr/local/sbin/egpu-video-disable --rollback

@@ -1,0 +1,15 @@
+[Unit]
+Description=Regenera as chaves de host SSH se estiverem ausentes
+Documentation=man:ssh-keygen(1)
+ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
+Before=ssh.service ssh.socket
+Wants=ssh.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ssh-keygen -A
+ExecStartPost=/bin/sh -c 'systemctl try-restart ssh.service 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

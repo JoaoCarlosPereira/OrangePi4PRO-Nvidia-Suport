@@ -57,23 +57,29 @@ fi
 
 echo "== systemd =="
 install -m 644 "$F"/systemd/egpu-*.service "$F"/systemd/egpu-*.timer /etc/systemd/system/
+install -m 644 "$F/systemd/regen-ssh-host-keys.service" /etc/systemd/system/
 install -d /etc/systemd/system/lightdm.service.d
 install -m 644 "$F/systemd/lightdm.service.d/egpu-rollback.conf" \
         /etc/systemd/system/lightdm.service.d/
 systemctl daemon-reload
 for u in egpu-pcie-recover.service egpu-video-apply.service \
-         egpu-video-watchdog.timer egpu-health.service; do
+         egpu-video-watchdog.timer egpu-health.service \
+         regen-ssh-host-keys.service; do
     systemctl enable "$u" >/dev/null 2>&1 && say "enabled $u"
 done
 
 echo "== Intent file =="
 if [ ! -f /etc/default/egpu-video ]; then
     cat > /etc/default/egpu-video <<'EOF'
-# Video output through the NVIDIA eGPU. "yes" = use the discrete card as display.
-# Change with: egpu-video-enable / egpu-video-disable
-EGPU_VIDEO=no
+# Which output drives the desktop.
+#   auto = use the NVIDIA card when a monitor is plugged into it,
+#          otherwise the Orange Pi HDMI            <- recommended
+#   yes  = always the NVIDIA card, even with no monitor detected on it
+#   no   = always the Orange Pi HDMI
+# Change with: egpu-video-auto / egpu-video-enable / egpu-video-disable
+EGPU_VIDEO=auto
 EOF
-    say "/etc/default/egpu-video  (EGPU_VIDEO=no -- turn on with egpu-video-enable)"
+    say "/etc/default/egpu-video  (EGPU_VIDEO=auto)"
 else
     say "/etc/default/egpu-video already exists, left alone"
 fi
@@ -103,12 +109,18 @@ else
 fi
 
 echo
-echo "Done. Next:"
-echo "  1. sudo egpu-video-check     # confirm the GPU and its connectors"
-echo "  2. sudo egpu-video-enable    # switch X to the NVIDIA card"
-echo "  3. sudo systemctl restart lightdm"
+echo "Done. Output selection is automatic from now on:"
+echo "  monitor plugged into the NVIDIA card -> desktop and console go there"
+echo "  no monitor on the NVIDIA card        -> Orange Pi HDMI"
 echo
-echo "  sudo egpu-health             # verify the whole stack at any time"
+echo "  sudo egpu-video-apply        # re-decide now, without rebooting"
+echo "  sudo systemctl restart lightdm"
+echo
+echo "  sudo egpu-video-check        # what does the GPU see?"
+echo "  sudo egpu-health             # verify the whole stack"
+echo
+echo "Overrides: egpu-video-enable (always NVIDIA), egpu-video-disable (always"
+echo "Orange Pi HDMI), egpu-video-auto (back to automatic)."
 echo
 echo "Keep an SSH session open the first time. If X fails, the watchdog reverts"
-echo "to the Allwinner HDMI 75 s after boot."
+echo "to the Orange Pi HDMI 75 s after boot."

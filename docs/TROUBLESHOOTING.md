@@ -205,14 +205,22 @@ rebooted three times and the endpoint has not appeared, stop rebooting.
 
 ### Black screen with a blinking cursor in the corner
 
-The console migrated to the NVIDIA framebuffer while that card produces no image.
-Caused by `nvidia_drm fbdev=1` before video works.
+**This is usually not a hang.** The text console migrated to the NVIDIA
+framebuffer while your monitor is somewhere else — or while that card is not
+producing an image. The cursor is a healthy console with nothing written to it.
 
-Over SSH:
+Before debugging anything: **move the monitor to the other output.** If the
+desktop is there, nothing is broken; the console and X are simply on different
+heads.
+
+Caused by `nvidia_drm fbdev=1`, which the 580 driver sets by itself. The current
+`egpu-video-apply` handles this — it loads the module with `fbdev=0` and only
+moves the console to the GPU after confirming a monitor is connected there. If
+you are on an older setup, over SSH:
 
 ```bash
 sudo sh -c 'echo "options nvidia_drm modeset=1 fbdev=0" > /etc/modprobe.d/egpu-nofbdev.conf'
-sudo egpu-video-disable
+sudo egpu-video-apply
 sudo systemctl restart lightdm
 ```
 
@@ -262,6 +270,33 @@ Seen while the monitor was on a port that produced no signal. After moving the
 monitor to a working port, X started cleanly and these never recurred. The
 relationship was never fully established — if you hit this, **check the physical
 output first** before assuming a driver problem.
+
+---
+
+## SSH refuses connections but the board pings
+
+```
+$ ping 192.168.2.118      # replies
+$ ssh orangepi@...        # Connection refused
+```
+
+`sshd` is not listening. The usual cause on a cloned or sanitised image is
+**missing host keys** — `sshd` will not start without them, and nothing on this
+image regenerates them.
+
+Confirm the board actually finished booting by checking another service; `xrdp`
+listens on **3389** and is a good canary. If 3389 answers, the boot completed and
+only `sshd` is broken.
+
+Fix, from a local terminal or over RDP:
+
+```bash
+sudo ssh-keygen -A
+sudo systemctl enable --now ssh
+```
+
+Prevent it: install `regen-ssh-host-keys.service` (see the tutorial, §5.3).
+`egpu-health` also flags missing host keys.
 
 ---
 

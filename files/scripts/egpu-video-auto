@@ -1,0 +1,7 @@
+#!/bin/sh
+# Volta ao comportamento automatico: usa a NVIDIA se houver monitor nela,
+# senao o HDMI do Orange Pi.
+set -eu
+sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=auto/' /etc/default/egpu-video
+/usr/local/sbin/egpu-video-apply
+echo "Modo automatico. Aplique agora com: systemctl restart lightdm"

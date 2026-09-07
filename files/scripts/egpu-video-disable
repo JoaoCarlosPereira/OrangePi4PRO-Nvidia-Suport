@@ -1,11 +1,13 @@
 #!/bin/sh
-# Sem argumentos: desliga a eGPU como saida de video, permanentemente.
-# Com --auto (watchdog/rollback): desliga so neste boot; o egpu-video-apply
-# volta a ligar no proximo boot se a GPU estiver funcional.
+# Sem argumentos: forca o HDMI do Orange Pi, permanentemente.
+# Com --rollback (watchdog/OnFailure): desfaz so neste boot; o egpu-video-apply
+# volta a decidir no proximo.
 set -eu
 
-AUTO=0
-if [ "${1:-}" = "--auto" ]; then AUTO=1; fi
+ROLLBACK=0
+case "${1:-}" in
+    --rollback|--auto) ROLLBACK=1 ;;   # --auto mantido como alias antigo
+esac
 
 MUDOU=0
 if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
@@ -13,16 +15,17 @@ if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
     MUDOU=1
 fi
 
-if [ "$AUTO" -eq 0 ]; then
+if [ "$ROLLBACK" -eq 0 ]; then
     sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=no/' /etc/default/egpu-video
-    echo "Desativado permanentemente. Aplique com: systemctl restart lightdm"
+    if [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" = "nvidia-drmdrmfb" ]; then
+        rmmod nvidia_drm 2>/dev/null || true
+        modprobe nvidia_drm modeset=1 fbdev=0 2>/dev/null || true
+    fi
+    echo "Fixado no HDMI do Orange Pi. Aplique com: systemctl restart lightdm"
     exit 0
 fi
 
-# Caminho automatico: nao mexe na intencao do usuario.
-if [ "$MUDOU" -eq 0 ]; then
-    exit 0
-fi
-logger -t egpu-video "fallback automatico neste boot; sera reativado no proximo"
+[ "$MUDOU" -eq 0 ] && exit 0
+logger -t egpu-video "rollback neste boot; o proximo volta a decidir sozinho"
 systemctl reset-failed lightdm.service || true
 systemctl restart lightdm.service || true

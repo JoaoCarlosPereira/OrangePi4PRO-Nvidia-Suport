@@ -67,7 +67,7 @@ The GPU needs its own power supply. The Orange Pi cannot feed a discrete card.
 
 ### 1. Flash the prebuilt image
 
-> ### ⚠️ Known defect in image v1.0
+> ### ⚠️ Image v1.0 only — fixed in v1.1
 >
 > **SSH does not start on first boot.** The sanitisation removed
 > `/etc/ssh/ssh_host_*` without arming regeneration, so `sshd` fails and port 22
@@ -79,15 +79,13 @@ The GPU needs its own power supply. The Orange Pi cannot feed a discrete card.
 > sudo systemctl enable --now ssh
 > ```
 >
-> Also note the text console lands on the **NVIDIA** framebuffer even though eGPU
-> video ships disabled, because the 580 driver defaults to `fbdev=1`. If your
-> monitor is on the GPU you will see only a blinking cursor while the desktop is
-> on the Allwinner HDMI. Fix with:
+> **The text console also lands on the NVIDIA framebuffer** even though eGPU
+> video ships disabled, because the 580 driver defaults to `fbdev=1`. A monitor
+> on the GPU then shows only a blinking cursor while the desktop sits on the
+> Orange Pi HDMI — indistinguishable from a hang. Fix with:
 > ```bash
 > echo 'options nvidia_drm modeset=1 fbdev=0' | sudo tee /etc/modprobe.d/egpu-nofbdev.conf
 > ```
->
-> A corrected image will replace v1.0. Track it in the issues.
 
 
 The fastest path. See [releases](../../releases). The image behaves like any
@@ -116,16 +114,29 @@ directly.
 
 1. The root filesystem expands to fill the card (this can add up to a minute).
 2. You will be asked to set a new password and create your user.
-3. Video output through the GPU starts **disabled**, because the image has to boot
-   on machines that have no GPU attached. Turn it on once you are logged in:
+3. **Output selection is automatic.** If a monitor is plugged into the NVIDIA
+   card, the desktop and the text console both go there. If not, they stay on the
+   Orange Pi HDMI. Nothing to configure.
+
+To re-decide without rebooting — after plugging or unplugging a monitor:
 
 ```bash
-sudo egpu-video-check     # confirm the GPU and its connectors are seen
-sudo egpu-video-enable    # switch X to the NVIDIA card
+sudo egpu-video-apply
 sudo systemctl restart lightdm
 ```
 
-If X fails to come up, a watchdog reverts to the Allwinner HDMI 75 seconds after
+Overrides, if you need them:
+
+| Command | Effect |
+|---|---|
+| `egpu-video-auto` | automatic (default) |
+| `egpu-video-enable` | always the NVIDIA card, even with no monitor detected |
+| `egpu-video-disable` | always the Orange Pi HDMI |
+
+`egpu-video-enable` exists for KVM switches and monitors that do not assert
+hot-plug detect while powered off.
+
+If X fails to come up, a watchdog reverts to the Orange Pi HDMI 75 seconds after
 boot — you will not be locked out.
 
 > **What the image contains:** the patched NVIDIA 580.142 modules, the driver and

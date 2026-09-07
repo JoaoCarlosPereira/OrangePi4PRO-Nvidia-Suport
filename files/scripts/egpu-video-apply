@@ -1,45 +1,104 @@
 #!/bin/sh
-# Decide, a cada boot, se o X sobe na eGPU. Roda depois da recuperacao da PCIe
-# e antes do display manager.
+# Decide, a cada boot, em qual saida o desktop sobe.
+#
+# Regra (EGPU_VIDEO=auto, o padrao):
+#   monitor ligado na NVIDIA  -> desktop e console vao para a NVIDIA
+#   nenhum monitor na NVIDIA  -> desktop e console ficam no HDMI do Orange Pi
+#
+# Roda depois do egpu-pcie-recover e antes do display manager.
 set -eu
 
 CANON=/etc/X11/xorg-egpu-nvidia.conf
 LIVE=/etc/X11/xorg.conf
 GPU=/sys/bus/pci/devices/0000:01:00.0
 
-fallback() {
+# ---------------------------------------------------------------- integrada
+# Console E desktop no HDMI do Orange Pi. Recarrega nvidia_drm com fbdev=0
+# se ele ja tiver sequestrado o fbcon -- sem isso o console fica numa saida
+# sem monitor, que e indistinguivel de uma tela travada.
+usar_integrada() {
     if [ -f "$LIVE" ] && grep -q egpu-layout "$LIVE"; then
         rm -f "$LIVE"
     fi
-    logger -t egpu-video-apply "$1 -- desktop no HDMI do Orange Pi neste boot"
+    if [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" = "nvidia-drmdrmfb" ]; then
+        rmmod nvidia_drm 2>/dev/null || true
+        modprobe nvidia_drm modeset=1 fbdev=0 2>/dev/null || true
+    fi
+    logger -t egpu-video-apply "$1 -- desktop e console no HDMI do Orange Pi"
     exit 0
 }
 
-EGPU_VIDEO=no
+# ------------------------------------------------------------------- nvidia
+usar_nvidia() {
+    # fbdev=1 leva o console para a mesma saida que tem monitor.
+    if [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" != "nvidia-drmdrmfb" ]; then
+        rmmod nvidia_drm 2>/dev/null || true
+        modprobe nvidia_drm modeset=1 fbdev=1 || true
+    fi
+    install -m 644 "$CANON" "$LIVE"
+    logger -t egpu-video-apply "monitor detectado na NVIDIA ($1) -- desktop e console na GPU"
+    exit 0
+}
+
+# Lista os conectores DRM da GPU que estao com monitor ligado.
+conectores_ligados() {
+    for c in "$GPU"/drm/card*/card*-*; do
+        [ -e "$c/status" ] || continue
+        [ "$(cat "$c/status")" = "connected" ] || continue
+        basename "$c"
+    done
+}
+
+EGPU_VIDEO=auto
 [ -f /etc/default/egpu-video ] && . /etc/default/egpu-video
 
-[ "$EGPU_VIDEO" = "yes" ] || fallback "desativado em /etc/default/egpu-video"
-[ -f "$CANON" ]           || fallback "config canonica ausente"
-[ -e "$GPU" ]             || fallback "GPU nao enumerada na PCIe"
+case "$EGPU_VIDEO" in
+    no)  usar_integrada "desativado em /etc/default/egpu-video" ;;
+    yes|auto) : ;;
+    *)   usar_integrada "EGPU_VIDEO=$EGPU_VIDEO invalido" ;;
+esac
+
+[ -f "$CANON" ] || usar_integrada "config canonica ausente"
+[ -e "$GPU" ]   || usar_integrada "GPU nao enumerada na PCIe"
 
 # Carregar os modulos AQUI, e nao via modules-load.d, garante que so tentamos
 # depois que o egpu-pcie-recover teve chance de trazer o endpoint de volta.
-modprobe nvidia          || fallback "modprobe nvidia falhou"
-modprobe nvidia_modeset  || fallback "modprobe nvidia_modeset falhou"
-modprobe nvidia_drm modeset=1 || fallback "modprobe nvidia_drm falhou"
+# fbdev=0 no primeiro carregamento: so movemos o console depois de confirmar
+# que existe monitor na GPU.
+modprobe nvidia         || usar_integrada "modprobe nvidia falhou"
+modprobe nvidia_modeset || usar_integrada "modprobe nvidia_modeset falhou"
+modprobe nvidia_drm modeset=1 fbdev=0 || usar_integrada "modprobe nvidia_drm falhou"
 
-nvidia-smi >/dev/null 2>&1 || fallback "nvidia-smi nao responde"
+nvidia-smi >/dev/null 2>&1 || usar_integrada "nvidia-smi nao responde"
 
-# Esperar o no KMS da GPU aparecer antes de liberar o display manager.
+# Esperar o no KMS aparecer -- sem ele nao ha conectores para consultar.
 i=0
 while [ "$i" -lt 15 ]; do
-    if [ -n "$(ls -d "$GPU"/drm/card* 2>/dev/null)" ]; then
-        break
-    fi
+    [ -n "$(ls -d "$GPU"/drm/card* 2>/dev/null)" ] && break
     sleep 1
     i=$((i + 1))
 done
-[ -n "$(ls -d "$GPU"/drm/card* 2>/dev/null)" ] || fallback "no KMS nao apareceu"
+[ -n "$(ls -d "$GPU"/drm/card* 2>/dev/null)" ] || usar_integrada "no KMS nao apareceu"
 
-install -m 644 "$CANON" "$LIVE"
-logger -t egpu-video-apply "eGPU pronta -- X vai subir na RTX 3050"
+# EGPU_VIDEO=yes forca a GPU mesmo sem monitor detectado (util para KVM e
+# monitores que nao afirmam HPD quando desligados).
+if [ "$EGPU_VIDEO" = "yes" ]; then
+    usar_nvidia "forcado por EGPU_VIDEO=yes"
+fi
+
+# --------------------------------------------------------------------- auto
+# O HPD pode levar um instante depois do modeset inicial.
+i=0
+LIGADOS=""
+while [ "$i" -lt 8 ]; do
+    LIGADOS=$(conectores_ligados | tr '\n' ' ')
+    [ -n "$LIGADOS" ] && break
+    sleep 1
+    i=$((i + 1))
+done
+
+if [ -n "$LIGADOS" ]; then
+    usar_nvidia "$LIGADOS"
+fi
+
+usar_integrada "nenhum monitor na NVIDIA"

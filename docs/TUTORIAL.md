@@ -465,14 +465,28 @@ The design here separates **intent** from **live configuration**:
 | File | Role |
 |---|---|
 | `/etc/X11/xorg-egpu-nvidia.conf` | Canonical layout. **Never removed.** |
-| `/etc/default/egpu-video` | Intent: `EGPU_VIDEO=yes\|no` |
+| `/etc/default/egpu-video` | Intent: `EGPU_VIDEO=auto\|yes\|no` |
 | `/etc/X11/xorg.conf` | Live config, recreated each boot **only if the GPU is usable** |
 
 `egpu-video-apply.service` runs after PCIe recovery and before the display
-manager. Each boot it checks, in order: intent → endpoint present → modules load →
-`nvidia-smi` answers → a KMS node appeared. Only then does it install the
-canonical file. Otherwise it removes the live file and the desktop comes up on the
-Allwinner HDMI **for that boot only**, self-healing on the next one.
+manager. In the default `auto` mode it decides which output to use:
+
+1. Is the endpoint on the bus, do the modules load, does `nvidia-smi` answer, did
+   a KMS node appear? If any of that fails → Orange Pi HDMI.
+2. **Is a monitor actually plugged into the NVIDIA card?** It polls the card's DRM
+   connectors for up to 8 s, because hot-plug detect can lag the initial modeset.
+   Connected → NVIDIA. Nothing connected → Orange Pi HDMI.
+
+The decision covers the **text console too**, not just X. The module is first
+loaded with `fbdev=0`, and only reloaded with `fbdev=1` once a monitor is
+confirmed on the GPU. This ordering matters: the 580 driver enables fbdev on its
+own, and a console sitting on an output with no monitor is indistinguishable from
+a hung board. Getting this backwards is what made a perfectly healthy boot look
+dead during development.
+
+`EGPU_VIDEO=yes` forces the NVIDIA card even with nothing detected — for KVM
+switches and monitors that do not assert HPD while powered off. `no` pins the
+Orange Pi HDMI. `egpu-video-auto` returns to automatic.
 
 Module loading lives in that service rather than `/etc/modules-load.d/`, so
 `nvidia_drm` is never loaded before PCIe recovery has had its chance.
@@ -489,6 +503,19 @@ Two nets are therefore needed:
   — catches a clean X failure.
 - `egpu-video-watchdog.timer` fires 75 s after boot and verifies X actually
   answers `xdpyinfo` — catches the wedged case.
+
+### 5.3 Do not strand yourself without SSH
+
+Whatever you do to this system, **keep `sshd` working**. It is the only recovery
+channel when the display is wrong, and the display is wrong often on this board.
+
+If you ever remove `/etc/ssh/ssh_host_*` — cloning a card, sanitising an image —
+regenerate them explicitly. Nothing on this image does it for you, and `sshd`
+refuses to start without keys, so port 22 silently never opens. Install
+`files/systemd/regen-ssh-host-keys.service`, which runs `ssh-keygen -A` before
+`ssh.service` when the keys are missing.
+
+`egpu-health` checks for this too.
 
 > **Never `pkill` a wedged Xorg on this board.** Stopping lightdm or killing that
 > process froze the machine hard enough to need a physical reset. If you must

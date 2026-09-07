@@ -38,6 +38,15 @@ fi
 # 4. Configuracao canonica presente?
 [ -f /etc/X11/xorg-egpu-nvidia.conf ] || aviso "config canonica do Xorg ausente"
 
+# 5. SSH utilizavel? Sem chaves de host o sshd nao sobe, e o unico caminho de
+#    recuperacao quando o video falha desaparece junto.
+if ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
+    aviso "chaves de host SSH ausentes -- sshd nao vai subir"
+    if [ "$REPAIR" -eq 1 ]; then
+        ssh-keygen -A && systemctl try-restart ssh.service 2>/dev/null || true
+    fi
+fi
+
 if [ "$FALHAS" -eq 0 ]; then
     echo "OK: kernel $KREL, modulo NVIDIA ${MOD:-?}, userspace ${PKG:-?}, holds e pin no lugar."
     [ -n "$USR" ] && echo "    driver carregado: $USR"
