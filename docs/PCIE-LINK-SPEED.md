@@ -301,4 +301,5 @@ until the kernel is rebuilt this is the ceiling and it is close enough.
 | `files/scripts/egpu-pcie-linkinfo` | Read-only snapshot: both partners' LnkCap/LnkSta/LnkSta2, AER, DWC Gen3 registers, LTSSM |
 | `files/scripts/egpu-pcie-retrain` | Runtime speed change to Gen1/2/3 with MMIO stress; refuses to run with NVIDIA loaded |
 | `files/scripts/egpu-pcie-bandwidth` | CUDA driver-API host↔GPU copy bandwidth, pinned memory, integrity check |
-| `files/patches/sunxi-pcie-report-real-link-speed.patch` | Driver: ~500 ms speed-change wait, log the measured speed |
+| `files/patches/sunxi-pcie-report-real-link-speed.patch` | Driver: ~500 ms speed-change wait, log the measured speed, NSI bandwidth cap lifted to 700 for every gen |
+| `tools/kernel/build-kernel.sh` | The exact cross-build recipe that produced a booting kernel (toolchain, RELR, `mkimage -A arm`, matched DTB) |

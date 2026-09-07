@@ -1,58 +1,14 @@
-From: Orange Pi 4 Pro eGPU project <https://github.com/JoaoCarlosPereira/OrangePi4PRO-Nvidia-Suport>
-Subject: [PATCH] pcie: sunxi: wait long enough for a Gen3 speed change and log the measured speed
 
-Two problems in the vendor root-complex driver made every eGPU boot log
-misleading link-speed information:
-
-1. sunxi_pcie_host_read_speed() read LINK_CONTROL2_LINK_STATUS2 & 0xf,
-   which is LnkCtl2.TargetLinkSpeed -- the value the driver itself had just
-   written -- not LnkSta.CurrentLinkSpeed. "PCIe speed of GenN" therefore
-   always echoed the request. Read LnkSta instead.
-
-2. sunxi_pcie_host_wait_for_speed_change() gave DIRECT_SPEED_CHANGE only
-   20 x usleep_range(100, 1000), i.e. 2-20 ms, to self-clear. A change to
-   8 GT/s goes through Recovery.Equalization phases 0-3, each allowed tens
-   of milliseconds by the spec, so a healthy Gen3 negotiation can time out
-   here. On timeout the driver then printed "PCIe speed of Gen1"
-   unconditionally. Wait up to ~500 ms, warn on timeout, and still report
-   what the link actually negotiated.
-
-Also give the NSI bandwidth-limit switch a default so an unexpected gen
-value cannot leave `bwl` uninitialised.
-
-Measured on Orange Pi 4 Pro with an RTX 3050 on the M.2 slot: with the
-Gen1 overlay the link is already at Gen1 when the driver requests Gen1, so
-the bit never self-clears and the old code printed "Speed change timeout"
-on every successful boot. With the stock DT (max-link-speed = <3>) the link
-trains to 8.0 GT/s x1 with EqualizationComplete+ and a clean AER counter.
+The NSI bandwidth limiter was set from the requested gen (200/400/700
+MB/s) and measured throughput landed exactly on it (199 MB/s at Gen1,
+398 MB/s at Gen2). One lane cannot exceed ~985 MB/s, so give every gen
+the Gen3 budget. Measured after the change: 204-209 MB/s at Gen1.
 ---
---- a/bsp/drivers/pcie/pcie-sunxi.h	2026-09-07 03:08:56.824661407 -0300
-+++ b/bsp/drivers/pcie/pcie-sunxi.h	2026-09-07 03:08:56.849652673 -0300
-@@ -162,12 +162,21 @@
- #define PCIE_LINK_WIDTH_SPEED_CONTROL	0x80C
- #define PORT_LOGIC_SPEED_CHANGE		(0x1 << 17)
- #define LINK_CONTROL2_LINK_STATUS2	0xa0
-+#define LINK_CONTROL_LINK_STATUS	0x80
-+#define PCIE_LNKSTA_CLS_MASK		0xf	/* Current Link Speed, LnkSta[3:0] */
-+#define PCIE_LNKSTA_SHIFT		16
- /* Parameters for the waiting for link up routine */
- #define LINK_WAIT_MAX_RETRIE		20
- #define LINK_WAIT_USLEEP_MIN		90000
- #define LINK_WAIT_USLEEP_MAX		100000
- #define SPEED_CHANGE_USLEEP_MIN		100
- #define SPEED_CHANGE_USLEEP_MAX		1000
-+/*
-+ * A Gen3 speed change walks Recovery.Equalization phases 0-3; the spec allows
-+ * each phase tens of milliseconds. 20 x 1 ms was not enough and made every
-+ * boot print a bogus "Speed change timeout".
-+ */
-+#define SPEED_CHANGE_MAX_RETRIES	500
- #define WAIT_ATU			1
- 
- #define PCIE_MSI_ADDR_LO		0x820
---- a/bsp/drivers/pcie/pcie-sunxi-rc.c	2026-09-07 03:08:56.824613818 -0300
-+++ b/bsp/drivers/pcie/pcie-sunxi-rc.c	2026-09-07 03:08:56.849902637 -0300
-@@ -609,7 +609,7 @@
+diff --git a/bsp/drivers/pcie/pcie-sunxi-rc.c b/bsp/drivers/pcie/pcie-sunxi-rc.c
+index de5ae184d..c940975de 100644
+--- a/bsp/drivers/pcie/pcie-sunxi-rc.c
++++ b/bsp/drivers/pcie/pcie-sunxi-rc.c
+@@ -609,7 +609,7 @@ static int sunxi_pcie_host_wait_for_speed_change(struct sunxi_pcie *pci)
  	u32 tmp;
  	unsigned int retries;
  
@@ -61,15 +17,33 @@ trains to 8.0 GT/s x1 with EqualizationComplete+ and a clean AER counter.
  		tmp = sunxi_pcie_readl_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL);
  		if (!(tmp & PORT_LOGIC_SPEED_CHANGE))
  			return 0;
-@@ -627,6 +627,7 @@
+@@ -626,17 +626,14 @@ void sunxi_pcie_host_change_nsi_port_bwl(struct sunxi_pcie *pci, int gen)
+ 	int i, bwl;
  	for (i = 0; i < MBUS_PMU_MAX; i++) {
  		if (strstr(get_name(i), "pcie")) {
- 			switch (gen) {
-+			default:
- 			case 1:
- 				bwl = 200;
- 				break;
-@@ -651,15 +652,17 @@
+-			switch (gen) {
+-			case 1:
+-				bwl = 200;
+-				break;
+-			case 2:
+-				bwl = 400;
+-				break;
+-			case 3:
+-				bwl = 700;
+-				break;
+-			}
++			/*
++			 * The per-gen limits (200/400/700) cap measured throughput at
++			 * exactly those values on Orange Pi 4 Pro (398 MB/s on a Gen2
++			 * link that does 410-418 unrestricted). A single lane cannot
++			 * exceed ~985 MB/s anyway, so give every gen the Gen3 budget.
++			 */
++			bwl = 700;
++			(void)gen;
+ 			nsi_port_set_abs_bwlen(i, false);
+ 			nsi_port_set_abs_bwl(i, bwl);
+ 			nsi_port_set_abs_bwlen(i, true);
+@@ -651,15 +648,17 @@ int sunxi_pcie_host_read_speed(struct sunxi_pcie *pci)
  {
  	int val, gen;
  
@@ -92,7 +66,7 @@ trains to 8.0 GT/s x1 with EqualizationComplete+ and a clean AER counter.
  }
  
  int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
-@@ -682,12 +685,11 @@
+@@ -682,12 +681,11 @@ int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
  	sunxi_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
  
  	ret = sunxi_pcie_host_wait_for_speed_change(pci);
@@ -110,3 +84,29 @@ trains to 8.0 GT/s x1 with EqualizationComplete+ and a clean AER counter.
  
  	sunxi_pcie_dbi_ro_wr_dis(pci);
  	return 0;
+diff --git a/bsp/drivers/pcie/pcie-sunxi.h b/bsp/drivers/pcie/pcie-sunxi.h
+index 605406ba1..19d0558bd 100644
+--- a/bsp/drivers/pcie/pcie-sunxi.h
++++ b/bsp/drivers/pcie/pcie-sunxi.h
+@@ -162,12 +162,21 @@
+ #define PCIE_LINK_WIDTH_SPEED_CONTROL	0x80C
+ #define PORT_LOGIC_SPEED_CHANGE		(0x1 << 17)
+ #define LINK_CONTROL2_LINK_STATUS2	0xa0
++#define LINK_CONTROL_LINK_STATUS	0x80
++#define PCIE_LNKSTA_CLS_MASK		0xf	/* Current Link Speed, LnkSta[3:0] */
++#define PCIE_LNKSTA_SHIFT		16
+ /* Parameters for the waiting for link up routine */
+ #define LINK_WAIT_MAX_RETRIE		20
+ #define LINK_WAIT_USLEEP_MIN		90000
+ #define LINK_WAIT_USLEEP_MAX		100000
+ #define SPEED_CHANGE_USLEEP_MIN		100
+ #define SPEED_CHANGE_USLEEP_MAX		1000
++/*
++ * A Gen3 speed change walks Recovery.Equalization phases 0-3; the spec allows
++ * each phase tens of milliseconds. 20 x 1 ms was not enough and made every
++ * boot print a bogus "Speed change timeout".
++ */
++#define SPEED_CHANGE_MAX_RETRIES	500
+ #define WAIT_ATU			1
+ 
+ #define PCIE_MSI_ADDR_LO		0x820
