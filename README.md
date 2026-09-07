@@ -455,8 +455,8 @@ The GPU needs its own power supply. The Orange Pi cannot feed a discrete card.
 
 The fastest path. See [releases](../../releases). The image behaves like any
 official Orange Pi image: flash it, boot, and the filesystem expands to fill your
-card automatically. Current image: **v1.2**, PCIe at Gen2 and the link tooling
-included — see [docs/RELEASE-NOTES-v1.2.md](docs/RELEASE-NOTES-v1.2.md).
+card automatically. Current image: **v1.3**, PCIe at Gen2, rebuilt kernel and the link tooling
+included — see [docs/RELEASE-NOTES-v1.3.md](docs/RELEASE-NOTES-v1.3.md).
 
 **Requirements:** a card of **17 GB or larger**, and an NVIDIA Ampere GPU on a
 powered PCIe riser.
