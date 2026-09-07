@@ -27,7 +27,8 @@ OpenGL version string:  4.6.0 NVIDIA 580.142
 | Video output (X11) | ⚠️ | Works, but **the link drops under heavy GPU load** — see below |
 | Dual monitor | ⚠️ | 5120x1440 works, same stability caveat |
 | Survives reboot | ✅ | Verified end to end |
-| Wayland (GNOME) | ⚠️ | Session runs on the eGPU, but **performance is poor** — cause not yet identified |
+| Wayland (GNOME 50) | ✅ | Renders on the eGPU: P0, 2047 MHz, 7001 MHz mem |
+| Wayland (Plasma 6) | ✅ | Same |
 | Vulkan | ❓ | Untested |
 
 ### ⚠️ Stability: the link drops under load
@@ -131,11 +132,30 @@ No software setting fixes signal integrity.
 
 ### Wayland
 
-GNOME 50 is **Wayland-only** — upstream removed X11 in GNOME 49, and there is no
-`gnome-session-xsession` package. So on this board GNOME means Wayland.
+Wayland works — GNOME 50 and Plasma 6 both render on the eGPU. Getting there
+needed two things that are easy to miss.
 
-Wayland needs one extra thing that X11 does not: **telling the compositor which
-DRM device to use.** The board exposes three:
+**1. The GBM backend is missing from Ubuntu's arm64 packaging.** This was the real
+blocker. `libnvidia-gl-580` ships 24 libraries and omits `libnvidia-allocator`,
+which is NVIDIA's GBM backend. Without it `libgbm` falls through to Mesa's
+`dri_gbm.so`, which has no driver for `10de:2584`:
+
+```
+libEGL warning: pci id for fd 15: 10de:2584, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+```
+
+The library exists in NVIDIA's official aarch64 installer at the matching
+version. See **[files/nvidia-extra/README.md](files/nvidia-extra/README.md)** for
+the recipe — it is proprietary, so it is not committed here.
+
+> **A wrong turn worth recording.** Before this was found, KWin reported
+> `Pageflip timed out! This is a bug in the nvidia-drm kernel driver` — 41 times.
+> That was read as a second, deeper, probably unfixable problem. It was not: with
+> the GBM backend in place the timeouts went to **zero**. A clear error message
+> from good software is still a hypothesis, not a diagnosis.
+
+**2. Compositors must be told which DRM device to use.** The board exposes three:
 
 ```
 card0  sunxi-drm  SoC display engine
@@ -143,47 +163,36 @@ card1  pvrsrvkm   PowerVR GPU -- RENDER ONLY, no KMS
 card2  nvidia     the eGPU
 ```
 
-Left alone, mutter picks the PowerVR and dies:
+Left alone, mutter picks the PowerVR and dies with
+`DRM_IOCTL_MODE_CREATE_DUMB failed: Function not implemented`. Each compositor
+reads a different mechanism, so both are pre-installed:
+
+| Compositor | Mechanism | Shipped as |
+|---|---|---|
+| mutter / GNOME | udev tags `mutter-device-ignore` / `mutter-device-preferred-primary` | `files/udev/61-egpu-mutter-primary.rules` |
+| KWin / Plasma | `KWIN_DRM_DEVICES` | `files/plasma/egpu.sh` |
+| wlroots (sway, …) | `WLR_DRM_DEVICES` | not shipped — set it to `/dev/dri/card2` |
+
+Both are applied in the image even when the matching desktop is not installed, so
+whichever you add later already finds the ground prepared.
+
+Also required, and both handled: `nvidia_drm modeset=1 fbdev=0`, and membership in
+the **`render`** group — see the ACL note in
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+### Known rough edge: slow shutdown
+
+Tearing down a graphical session can wedge the GPU, and shutdown then crawls:
 
 ```
-KMS: DRM_IOCTL_MODE_CREATE_DUMB failed: Function not implemented
-Failed to lock front buffer on /dev/dri/card1
+NVRM: Going over RM unhandled interrupt threshold for irq 153
+nvidia-modeset: ERROR: GPU:0: Error while waiting for GPU progress: 0x0000c67d
+NVRM: krcWatchdog_IMPL: RC watchdog: GPU is probably locked! Notify Timeout Seconds: 7
 ```
 
-The session comes up black. `files/udev/61-egpu-mutter-primary.rules` fixes it
-with the tags mutter itself looks for — `mutter-device-ignore` on the PowerVR and
-the SoC engine, `mutter-device-preferred-primary` on the NVIDIA card. After that:
-
-```
-Created gbm renderer for '/dev/dri/card2'
-GPU /dev/dri/card2 selected primary given udev rule
-Added device '/dev/dri/card2' (nvidia-drm) using atomic mode setting.
-```
-
-Both heads light up, the compositor uses the real NVIDIA EGL stack
-(`libEGL_nvidia`, `libnvidia-eglcore`, `libnvidia-egl-gbm`), and the framebuffers
-live in VRAM.
-
-**But it is slow** — visible stutter, especially on cursor movement. That is an
-open problem. Ruled out so far, with evidence:
-
-- **Software rendering.** No — the process maps `libEGL_nvidia` and holds
-  `/dev/nvidia0`.
-- **Missing hardware cursor plane.** No — the device exposes 12 planes: 4 Overlay,
-  4 Primary, 4 Cursor, and a cursor plane is bound.
-- **Framebuffers in system memory crossing the Gen1 x1 link.** No — VRAM use
-  (~82 MiB) matches two 5120x1440 buffers held locally.
-- **Two compositors fighting over seat0.** Was a contributor and is fixed, but
-  the stutter survives it.
-
-Still unexplained: the GPU never leaves `P8 / 210 MHz` with `utilization 0 %`
-while the session stutters, and mutter logs `Failed to initialize accelerated
-iGPU/dGPU framebuffer sharing: Not hardware accelerated`. Nobody is busy, so
-something is waiting — KMS atomic commit latency over a Gen1 x1 link is the
-current suspect, untested.
-
-X11 remains the smooth option. GDM offers both, so the choice is the user's:
-pick XFCE (X11) or Ubuntu (GNOME/Wayland) at the login screen.
+The errors start about twenty seconds before `shutdown.target`, while the display
+manager is stopping. The RC watchdog then charges 7 s per occurrence, and the
+machine can hang after the final `SIGTERM`. Unresolved.
 
 ### Performance ceiling
 
