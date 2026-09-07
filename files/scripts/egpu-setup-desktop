@@ -35,8 +35,19 @@ case "$DE" in
     echo "== XFCE (X11) =="
     apt-get install -y xfce4 lightdm
     ;;
-  *) echo "uso: $0 [plasma|xfce]"; exit 1 ;;
+  gnome)
+    echo "== GNOME (Wayland -- o GNOME 50 nao tem sessao X11) =="
+    apt-get install -y ubuntu-desktop
+    ;;
+  *) echo "uso: $0 [plasma|gnome|xfce]"; exit 1 ;;
 esac
+
+echo "== RealtimeKit =="
+# Sem rtkit o mutter nao consegue dar prioridade de tempo real a thread de KMS
+# e o page flip perde a janela -- micro-engasgo com a GPU sobrando. O pipewire
+# reclama da mesma ausencia.
+apt-get install -y rtkit || true
+systemctl enable --now rtkit-daemon 2>/dev/null || true
 
 echo "== idioma pt_BR =="
 apt-get install -y language-pack-pt language-pack-pt-base || true

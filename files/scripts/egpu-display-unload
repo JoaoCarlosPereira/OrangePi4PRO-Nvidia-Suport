@@ -1,0 +1,23 @@
+#!/bin/sh
+# Roda NO DESLIGAMENTO, depois do display manager ter parado.
+#
+# Sem isto, desmontar a sessao grafica trava a GPU e o RC watchdog da NVIDIA
+# cobra 7 segundos por ocorrencia, ate a maquina pendurar depois do SIGTERM
+# final do systemd-shutdown:
+#
+#   NVRM: Going over RM unhandled interrupt threshold for irq 153
+#   nvidia-modeset: ERROR: GPU:0: Error while waiting for GPU progress: 0x0000c67d
+#   NVRM: krcWatchdog_IMPL: RC watchdog: GPU is probably locked!  Notify Timeout Seconds: 7
+#
+# Descarregar os modulos de display enquanto a GPU ainda responde evita a
+# cobranca. Nao descarregamos 'nvidia' -- ele serve computacao e demora mais.
+#
+# E MITIGACAO, NAO CONSERTO: se a GPU ja travou antes de chegarmos aqui, o
+# rmmod pode bloquear tambem. Por isso a unidade tem TimeoutStopSec: o pior
+# caso passa a ser o comportamento que ja existia, nunca pior.
+set -u
+logger -t egpu-display-unload "descarregando modulos de display da NVIDIA"
+rmmod nvidia_drm 2>/dev/null || true
+rmmod nvidia_modeset 2>/dev/null || true
+logger -t egpu-display-unload "concluido"
+exit 0

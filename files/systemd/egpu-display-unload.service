@@ -1,0 +1,18 @@
+[Unit]
+Description=Descarrega os modulos de display da NVIDIA no desligamento
+Documentation=https://github.com/JoaoCarlosPereira/OrangePi4PRO-Nvidia-Suport
+# Ordenado ANTES do display manager no boot, portanto DEPOIS dele no
+# desligamento -- que e exatamente quando queremos agir.
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/egpu-display-unload
+# Limite duro: se a GPU ja travou, o rmmod pode pendurar. Melhor desistir
+# do que piorar o desligamento que estamos tentando encurtar.
+TimeoutStopSec=25
+
+[Install]
+WantedBy=multi-user.target

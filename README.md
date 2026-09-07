@@ -180,7 +180,7 @@ Also required, and both handled: `nvidia_drm modeset=1 fbdev=0`, and membership 
 the **`render`** group — see the ACL note in
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
-### Known rough edge: slow shutdown
+### Slow shutdown
 
 Tearing down a graphical session can wedge the GPU, and shutdown then crawls:
 
@@ -191,8 +191,40 @@ NVRM: krcWatchdog_IMPL: RC watchdog: GPU is probably locked! Notify Timeout Seco
 ```
 
 The errors start about twenty seconds before `shutdown.target`, while the display
-manager is stopping. The RC watchdog then charges 7 s per occurrence, and the
-machine can hang after the final `SIGTERM`. Unresolved.
+manager is stopping. The RC watchdog then charges 7 s per occurrence and the
+machine can hang after `systemd-shutdown` sends its final `SIGTERM`.
+
+`egpu-display-unload.service` mitigates it by unloading `nvidia_drm` and
+`nvidia_modeset` while the GPU still answers. It is ordered `Before=` the display
+manager, which means it stops **after** it — the moment we want. `nvidia` itself
+is left loaded; it serves compute and takes longer to release.
+
+**Mitigation, not a fix.** If the GPU is already wedged by the time it runs, the
+`rmmod` can block too, which is why the unit carries `TimeoutStopSec=25`: the
+worst case is the behaviour you already had, never worse. The underlying problem
+— display teardown wedging the GPU — is unresolved and is likely the same fault
+behind the hard freezes.
+
+### Micro-stutter: RealtimeKit
+
+If the desktop stutters while the GPU is clearly working, check for this:
+
+```
+gnome-shell: Failed to make thread 'KMS thread' high priority scheduled:
+             Name "org.freedesktop.RealtimeKit1" does not exist
+```
+
+The image ships without `rtkit`, so mutter cannot give its KMS thread real-time
+priority and page-flip timing gets preempted by ordinary work. `pipewire`
+complains about the same absence. Install it and start a fresh session:
+
+```bash
+sudo apt install rtkit
+sudo systemctl enable --now rtkit-daemon
+```
+
+Locking the GPU clocks does **not** substitute for this — the frames were not slow
+to render, they were late to be scheduled.
 
 ### Performance ceiling
 
