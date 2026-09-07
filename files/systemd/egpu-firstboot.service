@@ -1,0 +1,20 @@
+[Unit]
+Description=First-boot menu: keep running from the boot medium or install the system to a disk
+After=orangepi-firstrun.service orangepi-resize-filesystem.service systemd-udev-settle.service local-fs.target
+Before=display-manager.service getty@tty1.service
+ConditionPathExists=!/var/lib/egpu/firstboot-done
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/bin/plymouth quit
+ExecStart=/usr/local/sbin/egpu-firstboot
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

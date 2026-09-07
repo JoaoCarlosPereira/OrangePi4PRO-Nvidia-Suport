@@ -1,0 +1,89 @@
+#!/bin/bash
+# Move the running system to another disk and keep booting from the current medium.
+#
+#   egpu-install-to-disk --list                 show candidate disks
+#   egpu-install-to-disk [--yes] [--no-reboot] /dev/sdX   ERASE that disk, copy the system there
+#   egpu-install-to-disk --revert               boot from the current medium's own rootfs again
+#
+# Why: the A733 ROM only boots from microSD/eMMC/SPI, and the vendor U-Boot only
+# reads microSD and USB 2.0. Linux, once running, drives the USB-C 3.1 port and NVMe
+# at full speed. So the boot medium keeps /boot (kernel, DTB, orangepiEnv.txt) and a
+# complete fallback system, and the root filesystem lives on the fast disk:
+#
+#   boot medium (microSD / USB 2.0 stick): /boot/orangepiEnv.txt -> rootdev=UUID=<disk>
+#   disk: /  (ext4, whole disk, GPT)       /etc/fstab mounts the boot medium at /media/bootfs
+#                                          and bind-mounts /media/bootfs/boot on /boot
+#
+# The target disk is wiped: GPT, one ext4 partition, exclusively for the system.
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
+YES=0; REBOOT=1; TARGET=""; MODE=install
+for a in "$@"; do case $a in --yes) YES=1;; --no-reboot) REBOOT=0;; --list) MODE=list;; --revert) MODE=revert;; /dev/*) TARGET=$a;; *) echo "unknown argument $a"; exit 1;; esac; done
+
+# Where does U-Boot read /boot from? In the split layout /boot is a bind mount of the
+# boot medium; before the split it is simply on /.
+bootfs_part() {
+    local src; src=$(findmnt -n -o SOURCE /media/bootfs 2>/dev/null || true)
+    [ -n "$src" ] || src=$(findmnt -n -o SOURCE / | sed 's/\[.*//')
+    echo "$src"
+}
+BOOTPART=$(bootfs_part); BOOTDISK=$(lsblk -n -o PKNAME "$BOOTPART" | head -1); BOOTUUID=$(blkid -s UUID -o value "$BOOTPART")
+BOOTFS_MNT=$(findmnt -n -o TARGET /media/bootfs 2>/dev/null || echo /)
+ENVFILE=${BOOTFS_MNT%/}/boot/orangepiEnv.txt; [ -f "$ENVFILE" ] || ENVFILE=/boot/orangepiEnv.txt
+
+candidates() {
+    lsblk -dn -o NAME,TYPE,SIZE,TRAN,MODEL,RM | awk -v b="$BOOTDISK" '$2=="disk" && $1!=b && $1!~/^(loop|zram|mtd|ram)/ {printf "/dev/%s|%s|%s|%s\n",$1,$3,($4==""?"?":$4),substr($0,index($0,$5))}'
+}
+case $MODE in
+    list)
+        echo "boot medium: /dev/$BOOTDISK ($BOOTPART, UUID $BOOTUUID); rootdev now: $(grep -o 'rootdev=.*' "$ENVFILE")"
+        echo "candidate disks (will be ERASED if chosen):"; candidates | tr '|' '\t' | sed 's/^/  /'; exit 0;;
+    revert)
+        cp -n "$ENVFILE" "$ENVFILE.before-install-to-disk" 2>/dev/null || true
+        sed -i "s/^rootdev=.*/rootdev=UUID=$BOOTUUID/" "$ENVFILE"; sync
+        echo "rootdev restored to the boot medium ($BOOTUUID). Reboot to run from it again."; exit 0;;
+esac
+
+[ -n "$TARGET" ] || { echo "no target disk given; use --list"; exit 1; }
+[ -b "$TARGET" ] || { echo "$TARGET is not a block device"; exit 1; }
+[ "$(lsblk -dn -o TYPE "$TARGET")" = disk ] || { echo "$TARGET is not a whole disk"; exit 1; }
+[ "$(basename "$TARGET")" != "$BOOTDISK" ] || { echo "$TARGET is the boot medium itself"; exit 1; }
+USED=$(df --output=used -B1 / | tail -1); TSIZE=$(blockdev --getsize64 "$TARGET"); NEED=$(( USED + USED/10 + 1024*1024*1024 ))
+[ "$TSIZE" -ge "$NEED" ] || { echo "$TARGET is too small: $((TSIZE/1048576)) MiB, need $((NEED/1048576)) MiB"; exit 1; }
+echo "boot medium : /dev/$BOOTDISK (stays; keeps /boot and a fallback system)"
+echo "target disk : $TARGET  $(lsblk -dn -o SIZE,TRAN,MODEL "$TARGET" | tr -s ' ')"
+echo "ALL DATA ON $TARGET WILL BE ERASED."
+if [ $YES -eq 0 ]; then read -rp "Type ERASE to continue: " a; [ "$a" = ERASE ] || { echo "aborted"; exit 1; }; fi
+
+# 1. wipe and partition: GPT, one ext4 partition, whole disk
+for p in $(lsblk -ln -o NAME "$TARGET" | tail -n +2); do umount -q "/dev/$p" 2>/dev/null || true; done
+wipefs -aq "$TARGET"; parted -s "$TARGET" mklabel gpt mkpart root ext4 1MiB 100%; udevadm settle
+PART=$(lsblk -ln -o NAME,TYPE "$TARGET" | awk '$2=="part"{print "/dev/"$1}' | head -1)
+mkfs.ext4 -q -F -L opi-root "$PART"; NEWUUID=$(blkid -s UUID -o value "$PART")
+echo "partition   : $PART  UUID $NEWUUID"
+
+# 2. copy
+M=/mnt/egpu-target; mkdir -p $M; mount "$PART" $M
+rsync -aHAXx --numeric-ids --info=progress2 \
+      --exclude={/dev/*,/proc/*,/sys/*,/run/*,/tmp/*,/mnt/*,/media/*,/lost+found,/var/tmp/*,/swapfile} / $M/
+mkdir -p $M/{dev,proc,sys,run,tmp,mnt,media/bootfs,boot}
+# /boot on the target is only a mount point; U-Boot reads the boot medium's copy
+if [ "$BOOTFS_MNT" != / ]; then rsync -a "$BOOTFS_MNT/boot/" $M/boot.fallback/ 2>/dev/null || true; fi
+
+# 3. fstab on the target: root there, boot medium at /media/bootfs, its /boot bind-mounted on /boot
+{
+  echo "UUID=$NEWUUID / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1"
+  echo "UUID=$BOOTUUID /media/bootfs ext4 defaults,noatime 0 2"
+  echo "/media/bootfs/boot /boot none bind 0 0"
+  grep -E '^tmpfs[[:space:]]+/tmp' /etc/fstab || echo "tmpfs /tmp tmpfs defaults,nosuid 0 0"
+} > $M/etc/fstab
+mkdir -p $M/var/lib/egpu; touch $M/var/lib/egpu/firstboot-done
+sync; umount $M
+
+# 4. point the boot medium at the new root
+cp -n "$ENVFILE" "$ENVFILE.before-install-to-disk" 2>/dev/null || true
+sed -i "s/^rootdev=.*/rootdev=UUID=$NEWUUID/" "$ENVFILE"; sync
+echo
+echo "done. $ENVFILE now has rootdev=UUID=$NEWUUID"
+echo "undo any time with: egpu-install-to-disk --revert"
+[ $REBOOT -eq 1 ] && { echo "rebooting in 5 s..."; sleep 5; systemctl reboot; } || echo "reboot to start using $TARGET"

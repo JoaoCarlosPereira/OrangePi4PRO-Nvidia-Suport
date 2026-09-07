@@ -69,3 +69,27 @@ If the SPI content is bad, the board still boots from a microSD (the ROM tries
 it first). `egpu-install-uboot` keeps a full 16 MiB dump of the SPI NOR in
 `/root/egpu-uboot-backup/` before writing; restore with
 `mtd_debug write /dev/mtd0 0 16777216 <dump>` after `flash_erase /dev/mtd0 0 0`.
+
+## Fast root filesystem: boot medium + disk
+
+U-Boot reads only microSD and USB 2.0, but Linux drives the USB-C 3.1 port and
+NVMe at full speed. `egpu-install-to-disk` splits the two roles:
+
+```
+microSD or USB 2.0 stick   /boot (kernel, DTB, overlays, orangepiEnv.txt) + a complete fallback system
+disk (USB-C SSD, NVMe)     /   -- GPT, one ext4 partition, the whole disk, exclusively for the system
+```
+
+The disk's `/etc/fstab` mounts the boot medium at `/media/bootfs` and bind-mounts
+its `/boot` on `/boot`, so kernel updates and `orangepiEnv.txt` edits still land
+where U-Boot reads them. The boot medium's `orangepiEnv.txt` gets
+`rootdev=UUID=<disk>`; `egpu-install-to-disk --revert` points it back.
+
+```bash
+sudo egpu-install-to-disk --list          # candidates (everything but the boot medium)
+sudo egpu-install-to-disk /dev/sda        # asks you to type ERASE, copies, reboots
+```
+
+The image arms `egpu-firstboot.service`: after the first-boot resize, tty1 shows a
+menu for 60 seconds — keep running from the medium (default), install to a listed
+disk (erases it), or ask again next boot.

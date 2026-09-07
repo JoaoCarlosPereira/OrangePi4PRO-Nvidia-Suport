@@ -12,6 +12,9 @@
 #   EGPU_UBOOT_SPI=1   also flash the fixed U-Boot into the SPI NOR (needed to boot
 #                      without a microSD; boot0 untouched, readback-verified)
 #   EGPU_SKIP_OVERLAYS=1 / EGPU_SKIP_UBOOT=1   leave those parts alone
+#   EGPU_FIRSTBOOT=1   arm the first-boot menu (egpu-firstboot.service): on the next boot
+#                      tty1 offers to move the system to a connected disk (USB 3 SSD, NVMe)
+#                      while this medium keeps /boot. Used when building the image.
 #
 # Safe to re-run.
 set -euo pipefail
@@ -175,6 +178,14 @@ if [ -z "${EGPU_SKIP_SSH_SWITCH:-}" ]; then
     fi
 else
     say "troca adiada (EGPU_SKIP_SSH_SWITCH) -- vale no proximo boot"
+fi
+
+echo "== System on a fast disk (egpu-install-to-disk / first-boot menu) =="
+if [ -n "${EGPU_FIRSTBOOT:-}" ]; then
+    rm -f /var/lib/egpu/firstboot-done
+    systemctl enable egpu-firstboot.service >/dev/null 2>&1 && say "egpu-firstboot.service armed: the menu shows on tty1 at the next boot"
+else
+    say "menu not armed (EGPU_FIRSTBOOT=1 to arm). Any time: sudo egpu-install-to-disk --list"
 fi
 
 echo "== Intent file =="

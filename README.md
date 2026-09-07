@@ -440,6 +440,7 @@ Orange Pi image:
 | Kernel | vendor | rebuilt: measured link speed in the log, NSI cap lifted (`kernel-*.tar.gz` asset, optional) |
 | U-Boot | M.2 rail bug (`dc1sw2`), Type-A ports unpowered at boot | fixed package (rail + USB VBUS) in the card's boot area and in the `.deb` orangepi-config uses; SPI NOR on request |
 | Boot without microSD | no | yes, from USB in a Type-A port — [docs/BOOT-WITHOUT-SD.md](docs/BOOT-WITHOUT-SD.md) |
+| System on a fast disk (USB-C SSD, NVMe) | — | `egpu-install-to-disk`, offered by a first-boot menu; the boot medium keeps `/boot` |
 | Output selection, watchdogs, SSH hardening, `egpu-*` tools | — | installed by `install.sh` |
 
 
