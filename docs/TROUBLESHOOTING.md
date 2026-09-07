@@ -156,6 +156,22 @@ to the direct low-window read — so the high window works.
 **Disproven by A/B test:** clearing it to `0` does not break the mapping. The
 register is not consulted the way the theory assumed.
 
+### ❌ "USB peripherals were loading the board's rails"
+
+Removing a webcam and a microphone made a command that had reliably frozen the
+board run clean, 40 times in a row. The mechanism was plausible: the A733's PCIe
+PHY draws its rails from the AXP8191, and sustained USB current degrades that
+input.
+
+**Disproven by:** plugging everything back in and running 200 probe iterations
+with zero physical-layer errors. A **reset** had happened between the two states,
+and that was the real difference.
+
+**The lesson matters more than the hypothesis.** This failure is probabilistic and
+a reboot confounds every comparison. Two separate causal claims were made and
+retracted during this investigation, each from a single clean run. Measure with
+`egpu-link-margin` across several boots before believing anything.
+
 ### ❌ "BAR1 is dead"
 
 **Disproven:** see *Raw BAR1 reads are not a health check* above.

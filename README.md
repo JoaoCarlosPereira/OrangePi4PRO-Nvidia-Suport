@@ -54,9 +54,8 @@ nvidia-modeset: ERROR: GPU:0: Error while waiting for GPU progress   ← forever
 `0x0000000f` is **`NV_ERR_GPU_IS_LOST` — "GPU lost from the bus"**. The GSP RPC did
 not fail because of a driver bug; it failed because the device stopped answering.
 
-**It is a physical problem, not a software one — and the evidence points at the
-board's own power delivery, not the GPU's supply.** The root port's AER status
-shows receiver errors:
+**It is a physical problem, not a software one.** The root port's AER status shows
+receiver errors:
 
 ```
 DevSta: CorrErr+
@@ -69,44 +68,58 @@ link is electrically clean when quiet and degrades under traffic. That also
 explains the `Speed change timeout` on every boot and the intermittent
 enumeration: this link is marginal at Gen1 x1 and cannot train higher.
 
-**USB load on the board changes the outcome.** This was the finding that cracked
-it. With a webcam and a microphone attached, a single `nvidia-smi -q -d
-PERFORMANCE` was enough to drop the link and freeze the board — at GPU idle,
-11 W, with no load step involved. Unplugging those two devices made the *same
-command* run with zero errors, 40 repetitions clean, and a browser that had
-reliably crashed the machine started working.
+**The variable is the boot, not the workload.** Establishing this took three
+wrong turns, recorded here so nobody repeats them.
 
-The A733's PCIe PHY takes its 1.8 V and 3.3 V from the AXP8191 PMIC, which
-derives everything from the board's input. Sustained USB current sags and
-dirties that input; the PHY's supply and reference degrade; symbols get
-corrupted on the differential pairs. GPU load is not the trigger — **total board
-load is**, which is why it could fail with the GPU sitting idle.
+Observed across four boots, everything else held constant:
 
-**What to try, in order of likely impact:**
+| Boot | State | Result |
+|---|---|---|
+| A | all peripherals attached | froze opening a settings panel, then a browser |
+| B | all peripherals attached | froze on a single `nvidia-smi -q -d PERFORMANCE`, at GPU idle, 11 W |
+| C | webcam + mic unplugged | same command clean, 40 probes clean, browser worked |
+| D | **everything plugged back in** | **200 probes clean** |
 
-1. **Feed the board from a supply with real headroom**, over a short, thick
-   cable. Voltage drop on a thin USB-C cable is enough to matter here.
-2. **Move USB peripherals onto a powered hub** so they draw from their own
-   supply instead of the board's rails.
-3. **Do not chain bus-powered hubs.** Each one adds drop.
-4. **Reseat both ends of the riser**, then try a shorter or better one.
-5. **Bond the grounds** of the board's supply and the GPU's ATX PSU, and keep the
-   riser away from power cables.
+Boot C looked like proof that USB power load was the cause. Boot D refutes it —
+the peripherals came back and the link stayed clean. What actually separates A/B
+from C/D is a **reset in between**.
 
-### Measuring instead of guessing
+The most likely explanation is that **PCIe link training quality varies from boot
+to boot**. That fits the rest of this board's behaviour: `Speed change timeout` on
+every boot, enumeration that sometimes fails entirely, and a link that never gets
+past Gen1 x1. Some boots train a marginal link, and those boots freeze under
+traffic; others train a clean one and stay up.
 
-`egpu-link-margin` turns this into a number. It clears the root port's
+Two hypotheses that were tested and are **not** the cause:
+
+- **ASPM.** Already disabled on both ends of the link. Not it.
+- **GPU power transients.** Boot B froze at GPU idle, 11 W, P8, with no load step.
+  Not it.
+- **USB / total board load.** Refuted by boot D.
+
+What remains is signal integrity that is settled at link-training time: the riser,
+its connectors, and how the link happens to equalise on a given boot.
+
+### Check each boot before trusting it
+
+This is the practical consequence. `egpu-link-margin` clears the root port's
 correctable-error counter, generates GPU traffic, and stops at the **first**
-physical-layer error rather than waiting for the freeze:
+physical-layer error instead of waiting for the freeze:
 
 ```bash
-sudo egpu-link-margin        # 40 iterations by default
+sudo egpu-link-margin        # 40 iterations
 sudo egpu-link-margin 200    # tighter
 ```
 
-Run it before and after a change — a different cable, a better PSU, peripherals
-moved to a powered hub — and you get a comparable result instead of an
-impression. Manually, the same idea:
+Run it after booting. A clean result does not guarantee the boot is good, but a
+**dirty** result tells you this boot's link is marginal and heavy GPU use will
+likely take the machine down — reboot instead of finding out the hard way.
+
+Use the same probe before and after changing a cable or a riser. Just do not draw
+a conclusion from a single observation, the way this README did twice: the failure
+is probabilistic, and a reboot confounds every A/B test.
+
+Manually, the same idea:
 
 ```bash
 sudo setpci -s 00:00.0 0x110.L=0xffffffff        # clear
@@ -114,8 +127,7 @@ sudo setpci -s 00:00.0 0x110.L=0xffffffff        # clear
 sudo lspci -vv -s 00:00.0 | grep CESta            # RxErr- means clean
 ```
 
-No software setting fixes signal integrity. ASPM was already disabled on both
-ends, so that avenue is closed.
+No software setting fixes signal integrity.
 
 ### Performance ceiling
 
