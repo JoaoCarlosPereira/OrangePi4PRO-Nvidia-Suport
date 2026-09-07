@@ -1,0 +1,50 @@
+#!/bin/sh
+# Mede a margem eletrica do link PCIe.
+#
+# Em vez de esperar o travamento, usa o contador de erro correvivel do root
+# port (AER CESta) como alarme antecipado: gera trafego de GPU e para no
+# primeiro erro de camada fisica. O resultado -- quantas operacoes o link
+# aguentou -- e comparavel entre configuracoes, o que permite testar se uma
+# troca de cabo, de fonte ou de perifericos USB melhorou algo de fato.
+#
+# Uso: egpu-link-margin [iteracoes]   (padrao 40)
+set -eu
+
+RP=00:00.0
+CE=0x110          # AER Correctable Error Status, offset 0x10 na cap em 0x100
+N=${1:-40}
+
+[ "$(id -u)" -eq 0 ] || { echo "rode como root"; exit 1; }
+[ -e /sys/bus/pci/devices/0000:01:00.0 ] || { echo "GPU nao enumerada"; exit 1; }
+
+ce() { setpci -s "$RP" "$CE.L"; }
+
+setpci -s "$RP" "$CE.L=0xffffffff"     # limpa os bits sticky
+echo "link: $(lspci -vv -s $RP 2>/dev/null | sed -n 's/.*LnkSta:[[:space:]]*//p')"
+echo "contador zerado, gerando trafego..."
+
+i=0
+while [ "$i" -lt "$N" ]; do
+    i=$((i + 1))
+    nvidia-smi --query-gpu=pstate,power.draw,clocks.gr,memory.used \
+               --format=csv,noheader >/dev/null 2>&1 || {
+        echo "FALHA: nvidia-smi parou de responder na iteracao $i"
+        echo "       a GPU provavelmente caiu do barramento (NV_ERR_GPU_IS_LOST)"
+        exit 2
+    }
+    V=$(ce)
+    if [ "$V" != "00000000" ]; then
+        echo
+        echo "PRIMEIRO ERRO na iteracao $i de $N"
+        lspci -vv -s "$RP" 2>/dev/null | grep -E "CESta|DevSta"
+        echo
+        echo "RxErr = erro de camada fisica: simbolos corrompidos no cabo."
+        echo "O link esta eletricamente marginal. Ver README, secao de estabilidade."
+        exit 1
+    fi
+done
+
+echo
+echo "OK: $N iteracoes sem nenhum erro de camada fisica."
+echo "    Isso nao prova que o link e bom sob carga pesada, so que esta"
+echo "    limpo neste nivel de trafego. Rode com mais iteracoes para apertar."

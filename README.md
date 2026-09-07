@@ -54,8 +54,9 @@ nvidia-modeset: ERROR: GPU:0: Error while waiting for GPU progress   ← forever
 `0x0000000f` is **`NV_ERR_GPU_IS_LOST` — "GPU lost from the bus"**. The GSP RPC did
 not fail because of a driver bug; it failed because the device stopped answering.
 
-**It is a physical problem, not a software one.** The root port's AER status shows
-receiver errors:
+**It is a physical problem, not a software one — and the evidence points at the
+board's own power delivery, not the GPU's supply.** The root port's AER status
+shows receiver errors:
 
 ```
 DevSta: CorrErr+
@@ -68,18 +69,44 @@ link is electrically clean when quiet and degrades under traffic. That also
 explains the `Speed change timeout` on every boot and the intermittent
 enumeration: this link is marginal at Gen1 x1 and cannot train higher.
 
+**USB load on the board changes the outcome.** This was the finding that cracked
+it. With a webcam and a microphone attached, a single `nvidia-smi -q -d
+PERFORMANCE` was enough to drop the link and freeze the board — at GPU idle,
+11 W, with no load step involved. Unplugging those two devices made the *same
+command* run with zero errors, 40 repetitions clean, and a browser that had
+reliably crashed the machine started working.
+
+The A733's PCIe PHY takes its 1.8 V and 3.3 V from the AXP8191 PMIC, which
+derives everything from the board's input. Sustained USB current sags and
+dirties that input; the PHY's supply and reference degrade; symbols get
+corrupted on the differential pairs. GPU load is not the trigger — **total board
+load is**, which is why it could fail with the GPU sitting idle.
+
 **What to try, in order of likely impact:**
 
-1. **Bond the grounds.** The board and the GPU run from two independent power
-   supplies. Without a solid common ground the differential reference floats, and
-   receiver errors follow. Tie the ATX PSU's COM/chassis to the board's ground.
-   This is the classic cause of exactly this signature on eGPU builds.
-2. **Reseat both ends of the riser, then try a shorter or better one.** Cable
-   quality dominates at these lengths.
-3. **Route the riser away from power cables and do not coil it tightly.**
-4. **Check the PCIe/12 V connectors** on the card and the PSU's quality.
+1. **Feed the board from a supply with real headroom**, over a short, thick
+   cable. Voltage drop on a thin USB-C cable is enough to matter here.
+2. **Move USB peripherals onto a powered hub** so they draw from their own
+   supply instead of the board's rails.
+3. **Do not chain bus-powered hubs.** Each one adds drop.
+4. **Reseat both ends of the riser**, then try a shorter or better one.
+5. **Bond the grounds** of the board's supply and the GPU's ATX PSU, and keep the
+   riser away from power cables.
 
-Measure whether a change helped — clear the counters, use the machine, re-read:
+### Measuring instead of guessing
+
+`egpu-link-margin` turns this into a number. It clears the root port's
+correctable-error counter, generates GPU traffic, and stops at the **first**
+physical-layer error rather than waiting for the freeze:
+
+```bash
+sudo egpu-link-margin        # 40 iterations by default
+sudo egpu-link-margin 200    # tighter
+```
+
+Run it before and after a change — a different cable, a better PSU, peripherals
+moved to a powered hub — and you get a comparable result instead of an
+impression. Manually, the same idea:
 
 ```bash
 sudo setpci -s 00:00.0 0x110.L=0xffffffff        # clear
@@ -239,7 +266,7 @@ on this specific board, and about the surrounding plumbing that keeps it stable.
 | `xorg/` | Xorg layout that pins X to the NVIDIA card |
 | `modprobe/` | Module options |
 | `systemd/` | Boot-time services: PCIe recovery, conditional apply, watchdog |
-| `scripts/` | `egpu-*` helper commands |
+| `scripts/` | `egpu-*` helper commands, including `egpu-link-margin` |
 
 Every one of these is explained in the tutorial. Do not copy them blindly — the
 PCIe addresses come from the A733 manual and are board-specific.
