@@ -90,6 +90,15 @@ sudo egpu-install-to-disk --list          # candidates (everything but the boot 
 sudo egpu-install-to-disk /dev/sda        # asks you to type ERASE, copies, reboots
 ```
 
-The image arms `egpu-firstboot.service`: after the first-boot resize, tty1 shows a
-menu for 60 seconds — keep running from the medium (default), install to a listed
-disk (erases it), or ask again next boot.
+The image arms the first-boot menu in two forms: a text menu on tty1
+(`egpu-firstboot.service`, 30 s, for setups where the console is visible) and a
+desktop dialog (`egpu-firstboot-gui`, autostart) with the same choices — keep
+running from the medium (default), install to a listed disk (erases it), or ask
+again next boot. The dialog shows a progress bar driven by rsync and reboots when
+done. It is also in the application menu (System → "System disk (eGPU image)"),
+where it additionally offers to return to the boot medium's own system when the
+root is on another disk. While the password is still the default `orangepi` it
+is used silently; once changed, `sudo` asks. Log: `/var/log/egpu-install-to-disk.log`.
+
+Expect a first copy to a USB 2.0 stick to take 30–60 minutes (many small files);
+a USB-C SSD is a few minutes.
