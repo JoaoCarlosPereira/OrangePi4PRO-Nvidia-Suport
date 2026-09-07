@@ -34,6 +34,12 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 
 ## Phase 1 — Unlock Gen3 (the big win: another 2x)
 
+> **Status 2026-09-08.** Steps 3 and 4 done, see PCIE-LINK-SPEED.md §5.3. The
+> GSP halts on every Gen3 boot (4/4); a GSP booted at Gen2 works but the RM
+> pins its maximum to the speed negotiated at init and no open-side knob raises
+> it. Gen3 is blocked in the driver, not in the link. Next: step 5 (DMA patch)
+> or a newer driver release.
+
 3. **Instrument the GSP boot.** `NVreg_RmMsg` and `NVreg_ResmanDebugLevel` in
    `modprobe.d`, cold boot with the stock DT and the NVIDIA modules blocked, then
    `modprobe nvidia` while capturing `dmesg`. Goal: which RPC or stage the GSP is

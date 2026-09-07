@@ -262,19 +262,38 @@ at 700 by a Gen3 boot. Gen1's 199 MB/s was likewise pinned at its 200 limit. The
 driver patch is the place to lift it (set 700 for every gen, or skip the call);
 until the kernel is rebuilt this is the ceiling and it is close enough.
 
-### 5.3 Getting to Gen3: what to try, in order
+### 5.3 Phase 1 results (2026-09-08): where Gen3 actually stops
 
-1. **Instrument the GSP boot.** `NVreg_RmMsg=`/`NVreg_ResmanDebugLevel` in
-   `/etc/modprobe.d`, then load at Gen3 and capture the last RPC before `Xid 62`.
-   If the halt is in firmware transfer or queue setup, hypothesis 1 of §2.2
-   (non-coherent DMA race) is confirmed and the fix is in
-   `nvidia-arm-noncoherent-pr972.patch`, not in the PCIe stack.
-2. **Load at Gen2, then retrain to Gen3 with the driver running.** The RM
-   handles speed changes itself (it already drops to Gen1 at idle). If the GSP is
-   fine once booted and only the *boot* at Gen3 fails, `egpu-pcie-retrain 3`
-   after a successful Gen2 init isolates that — but it must be done with a way to
-   power-cycle the GPU at hand, and the script's `nvidia*` guard has to be
-   bypassed deliberately for that one test.
+Run on the Gen2 image with the rebuilt kernel, GPU PSU within reach, one
+`PERST#` per experiment:
+
+| Experiment | Result |
+|---|---|
+| Runtime retrain to Gen3 (no driver), 3000 MMIO reads | 8.0 GT/s, EQ complete, AER clean |
+| `modprobe nvidia` on that Gen3 link, `NVreg_EnableGpuFirmwareLogs=1` | `Xid 62` 1.5 s after `RmInitAdapter` start; `RmInitAdapter succeeded` is printed afterwards but the GPU reports "not in ready state" and `cuCtxCreate` fails. **4 of 4 attempts.** |
+| GSP firmware log decoding | Impossible: `gsp_log_ga10x.bin` is not shipped in the Ubuntu packages nor in the 580.142 `.run` |
+| `PERST#`, root port advertising Gen3 (`LnkCap`), driver init on a Gen2 link | Clean init, CUDA passes, 410/418 MB/s. `pcie.link.gen.max = 2`, `hostmax = 3`, `gpumax = 4`. Under load the RM stays at Gen2. |
+| Same, plus root port `LnkCtl2` target = Gen3 before init | Identical: `gen.max = 2`. The RM takes the link speed **negotiated at init** as its maximum. |
+| Retrain to Gen3 from the host with the driver loaded (GPU idle) | No effect: the RM owns the GPU's target speed and holds Gen1 at idle / Gen2 under load. |
+| Registry key to raise the maximum after init | None in the open kernel side; the PCIe gen policy runs inside GSP-RM (closed). |
+
+**Conclusion:** with driver 580.142 the only way to run Gen3 is to have the GSP
+boot on a Gen3 link, and that boot halts every time. The link itself is not the
+problem. **Gen2 is the practical ceiling for now**, and it is what the image
+ships. What is left to try is below, in order; everything in it is driver-side.
+
+### 5.3.1 Getting to Gen3: what to try, in order
+
+1. **Non-coherent DMA race in the GSP boot path.** The halt comes 1.5 s into
+   `RmInitAdapter`, while the RM is pushing the GSP firmware and its RPC queues
+   through the `nvidia-arm-noncoherent-pr972.patch` cache-maintenance path.
+   Review the barriers there; try `swiotlb=force` or a coherent-memory
+   allocation for the GSP queues as a diagnostic. This is the only hypothesis
+   left that is both plausible and fixable here.
+2. **A newer driver.** The GSP firmware and its boot sequence change between
+   releases; 580.142 is what this project pinned. Rebuilding a newer open-kernel
+   release with the same Arm patch and testing the Gen3 boot once is cheap
+   compared with debugging the closed firmware.
 3. **Controller-side Gen3 knobs**, all writable through `/dev/mem`, as read on
    the live board:
 
