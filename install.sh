@@ -183,7 +183,8 @@ fi
 echo "== System on a fast disk (egpu-install-to-disk / first-boot menu) =="
 if [ -n "${EGPU_FIRSTBOOT:-}" ]; then
     rm -f /var/lib/egpu/firstboot-done
-    systemctl enable egpu-firstboot.service >/dev/null 2>&1 && say "egpu-firstboot.service armed: the menu shows on tty1 at the next boot"
+    install -d /etc/xdg/autostart; install -m 644 "$F/xdg/egpu-firstboot.desktop" /etc/xdg/autostart/
+    systemctl enable egpu-firstboot.service >/dev/null 2>&1 && say "egpu-firstboot armed: menu on tty1 and in the desktop session at the next boot"
 else
     say "menu not armed (EGPU_FIRSTBOOT=1 to arm). Any time: sudo egpu-install-to-disk --list"
 fi

@@ -1,6 +1,6 @@
 [Unit]
 Description=First-boot menu: keep running from the boot medium or install the system to a disk
-After=orangepi-firstrun.service orangepi-resize-filesystem.service systemd-udev-settle.service local-fs.target
+After=orangepi-firstrun.service orangepi-resize-filesystem.service systemd-udev-settle.service local-fs.target egpu-video-apply.service
 Before=display-manager.service getty@tty1.service
 ConditionPathExists=!/var/lib/egpu/firstboot-done
 

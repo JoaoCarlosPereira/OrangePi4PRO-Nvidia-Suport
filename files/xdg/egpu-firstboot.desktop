@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=eGPU image first boot
+Comment=Offer to move the system to a fast disk while the boot medium keeps /boot
+Exec=/usr/local/sbin/egpu-firstboot-gui
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

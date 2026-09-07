@@ -16,9 +16,9 @@
 #
 # The target disk is wiped: GPT, one ext4 partition, exclusively for the system.
 set -euo pipefail
-[ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
 YES=0; REBOOT=1; TARGET=""; MODE=install
 for a in "$@"; do case $a in --yes) YES=1;; --no-reboot) REBOOT=0;; --list) MODE=list;; --revert) MODE=revert;; /dev/*) TARGET=$a;; *) echo "unknown argument $a"; exit 1;; esac; done
+[ "$MODE" = list ] || [ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
 
 # Where does U-Boot read /boot from? In the split layout /boot is a bind mount of the
 # boot medium; before the split it is simply on /.
@@ -27,7 +27,7 @@ bootfs_part() {
     [ -n "$src" ] || src=$(findmnt -n -o SOURCE / | sed 's/\[.*//')
     echo "$src"
 }
-BOOTPART=$(bootfs_part); BOOTDISK=$(lsblk -n -o PKNAME "$BOOTPART" | head -1); BOOTUUID=$(blkid -s UUID -o value "$BOOTPART")
+BOOTPART=$(bootfs_part); BOOTDISK=$(lsblk -n -o PKNAME "$BOOTPART" | head -1); BOOTUUID=$(lsblk -n -o UUID "$BOOTPART" | head -1)
 BOOTFS_MNT=$(findmnt -n -o TARGET /media/bootfs 2>/dev/null || echo /)
 ENVFILE=${BOOTFS_MNT%/}/boot/orangepiEnv.txt; [ -f "$ENVFILE" ] || ENVFILE=/boot/orangepiEnv.txt
 
