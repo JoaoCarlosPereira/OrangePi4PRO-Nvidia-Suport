@@ -75,6 +75,17 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 
 ## Phase 3 — Boot media and community fixes
 
+> **Status 2026-09-08.** Step 9 is two-thirds done. The vendor U-Boot
+> (`v2018.05-sun60iw2` @ b791be8) rebuilt with `-Wno-error` and the `dc1sw1`
+> rail fix boots the test card from the SD boot area (`bs=8k seek=2050`), and
+> the same `boot_package.fex` (1392640 bytes) is now in the **SPI NOR at
+> 0x40000**, readback-verified, with the vendor `boot0` at offset 0 untouched
+> and a full 16 MiB dump kept in `orangepi-backup/testcard-backup/spinor.bin`.
+> Not yet exercised: booting from the SPI U-Boot with no microSD present
+> (needs a rootfs on USB or NVMe). Caveat: the public U-Boot tree is from
+> March 2026 while the vendor binary on the cards is from July; nothing broke
+> on SD boot, but the July fixes are unknown.
+
 Detailed plan, with the survey of existing projects: [PHASE3-PLAN.md](PHASE3-PLAN.md).
 
 9. **Boot from USB or NVMe without a microSD.** The image's U-Boot cannot bring
