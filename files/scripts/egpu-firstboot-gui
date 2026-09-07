@@ -3,19 +3,23 @@
 # visible on whichever monitor the desktop landed on (the text menu on tty1 is not visible
 # when the console has no framebuffer, e.g. desktop on the NVIDIA card with fbdev=0).
 # Same choices, same flag, same installer.
+# Also installed as an application-menu entry ("--manual"): same dialog, any time.
 set -u
-FLAG=/var/lib/egpu/firstboot-done
-[ -e "$FLAG" ] && exit 0
+FLAG=/var/lib/egpu/firstboot-done; MANUAL=0
+[ "${1:-}" = "--manual" ] && MANUAL=1
+[ $MANUAL -eq 0 ] && [ -e "$FLAG" ] && exit 0
 command -v zenity >/dev/null || exit 0
-systemctl is-enabled orangepi-resize-filesystem.service >/dev/null 2>&1 && exit 0
-sleep 8
+[ $MANUAL -eq 0 ] && systemctl is-enabled orangepi-resize-filesystem.service >/dev/null 2>&1 && exit 0
+[ $MANUAL -eq 0 ] && sleep 8
 LIST=$(/usr/local/sbin/egpu-install-to-disk --list 2>/dev/null)
 BOOT=$(echo "$LIST" | sed -n 's/^boot medium: \(\/dev\/[a-z0-9]*\).*/\1/p')
 mapfile -t CANDS < <(echo "$LIST" | awk -F'|' '/^  \/dev/ {gsub(/^ +/,"",$1); print}')
 [ ${#CANDS[@]} -gt 0 ] || { pkexec sh -c "mkdir -p /var/lib/egpu; touch $FLAG" 2>/dev/null; exit 0; }
 ROWS=("Keep running from $BOOT" "")
+ROOTNOW=$(echo "$LIST" | grep -o 'rootdev=UUID=[0-9a-f-]*' | cut -d= -f3); BOOTUUID=$(echo "$LIST" | grep -o 'UUID [0-9a-f-]*' | head -1 | cut -d' ' -f2)
+[ -n "$ROOTNOW" ] && [ "$ROOTNOW" != "$BOOTUUID" ] && ROWS=("Return to the system on $BOOT  (revert; the disk is left untouched)" "current root: UUID $ROOTNOW")
 for c in "${CANDS[@]}"; do IFS='|' read -r dev size tran model <<<"$c"; ROWS+=("Install the system to $dev  (ERASES IT)" "$size $tran $model"); done
-ROWS+=("Ask again on the next boot" "")
+[ $MANUAL -eq 0 ] && ROWS+=("Ask again on the next boot" "")
 RAW=$(zenity --list --timeout=180 --title="Orange Pi 4 Pro eGPU image — first boot" --width=720 --height=330 \
   --text="The ROM boots only from microSD or USB 2.0. Linux can run the system from a faster disk (USB-C SSD, NVMe) while $BOOT keeps /boot." \
   --column=Choice --column=Disk "${ROWS[@]}" 2>/dev/null); RC=$?
@@ -25,6 +29,10 @@ RAW=$(zenity --list --timeout=180 --title="Orange Pi 4 Pro eGPU image — first 
 DEV=$(printf '%s' "$RAW" | grep -o '/dev/[a-z0-9]*' | head -1)
 case "$RAW" in
   *"Ask again"*) exit 0;;
+  *"Return to the system"*)
+    zenity --question --title="Confirm" --text="The next boot runs from $BOOT again.\nThe disk keeps its copy; choose it here later to switch back.\n\nReboot now?" 2>/dev/null || exit 0
+    TERM_CMD=$(command -v xfce4-terminal || command -v x-terminal-emulator || command -v gnome-terminal)
+    $TERM_CMD -e "sh -c 'sudo /usr/local/sbin/egpu-install-to-disk --revert && sudo systemctl reboot'" 2>/dev/null & wait;;
   *"Install the system"*)
     zenity --question --title="Confirm" --text="ALL DATA ON $DEV WILL BE ERASED.\n\nThe system is copied there and the board reboots into it.\n$BOOT stays as boot medium and fallback." 2>/dev/null || exit 0
     TERM_CMD=$(command -v xfce4-terminal || command -v x-terminal-emulator || command -v gnome-terminal)

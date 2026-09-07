@@ -181,6 +181,8 @@ else
 fi
 
 echo "== System on a fast disk (egpu-install-to-disk / first-boot menu) =="
+install -m 644 "$F/xdg/egpu-install-to-disk.desktop" /usr/share/applications/
+say "application menu: System -> 'System disk (eGPU image)'"
 if [ -n "${EGPU_FIRSTBOOT:-}" ]; then
     rm -f /var/lib/egpu/firstboot-done
     install -d /etc/xdg/autostart; install -m 644 "$F/xdg/egpu-firstboot.desktop" /etc/xdg/autostart/

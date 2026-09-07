@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=System disk (eGPU image)
+Name[pt_BR]=Disco do sistema (imagem eGPU)
+Comment=Move the system to a fast disk (USB-C SSD, NVMe) while the boot medium keeps /boot, or return to the boot medium
+Comment[pt_BR]=Mover o sistema para um disco rápido (SSD USB-C, NVMe) mantendo o /boot no cartão, ou voltar ao cartão
+Exec=/usr/local/sbin/egpu-firstboot-gui --manual
+Icon=drive-harddisk
+Terminal=false
+Categories=System;Settings;
