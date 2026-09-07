@@ -1,0 +1,20 @@
+# Acesso aos nos DRM sem depender de ACL nem de grupo.
+#
+# POR QUE ISTO EXISTE:
+# O kernel vendor e compilado sem CONFIG_TMPFS_POSIX_ACL, entao devtmpfs nao
+# guarda ACLs e o mecanismo uaccess do systemd falha em todo boot:
+#   (udev-worker): card2: Failed to apply ACL: Operation not supported
+# Restaria o acesso por grupo -- mas o greeter do GDM 50 roda como usuario
+# TRANSITORIO (gdm-greeter, uid dinamico na faixa 60000+), que nao tem grupos
+# suplementares. Nenhum dos dois caminhos funciona, e o greeter morre com:
+#   libEGL warning: failed to open /dev/dri/renderD129: Permission denied
+#   Failed to setup: The GPU chosen as primary is not supported by EGL.
+#
+# O greeter do SDDM nao sofria disso porque e X11 e o Xorg roda como root.
+#
+# COMPROMISSO: 0666 permite a qualquer usuario local abrir a GPU. Numa placa
+# de uso pessoal isso e aceitavel; num sistema multiusuario, nao. O conserto
+# correto e recompilar o kernel com CONFIG_TMPFS_POSIX_ACL=y, e ai esta regra
+# pode ser removida.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", MODE="0666"
+SUBSYSTEM=="drm", KERNEL=="renderD[0-9]*", MODE="0666"

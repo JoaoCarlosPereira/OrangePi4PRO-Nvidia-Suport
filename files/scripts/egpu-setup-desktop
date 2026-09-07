@@ -63,6 +63,11 @@ echo "== acesso a GPU por grupo =="
 for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do
     usermod -aG video,render "$u" 2>/dev/null && echo "  $u -> video, render"
 done
+# Greeter Wayland roda como usuario nao-root e precisa abrir a GPU.
+for u in gdm sddm lightdm; do
+    id "$u" >/dev/null 2>&1 && usermod -aG video,render "$u" 2>/dev/null \
+        && echo "  $u -> video, render (display manager)"
+done
 
 echo "== OnFailure para o display manager instalado =="
 for dm in sddm lightdm gdm3; do

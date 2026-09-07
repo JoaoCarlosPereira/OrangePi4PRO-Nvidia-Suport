@@ -316,6 +316,71 @@ Prevent it: install `regen-ssh-host-keys.service` (see the tutorial, §5.3).
 
 ---
 
+## The desktop wedges under use, and `nvidia-smi` says `[GPU requires reset]`
+
+Check `dmesg` for this — it is the deepest fault found on this platform:
+
+```
+WARNING: at kernel-open/nvidia-drm/nvidia-drm-crtc.h:335
+         __nv_drm_handle_flip_event+0x188/0x194 [nvidia_drm]
+```
+
+`nv_drm_crtc_dequeue_flip()` found an empty flip list: the driver got more
+page-flip completion events than flips it enqueued. Count them —
+
+```bash
+sudo dmesg | grep -c __nv_drm_handle_flip_event
+```
+
+245 in one session here. After enough of them the GPU needs a reset, the
+compositor hangs, and only a reboot plus a mains power cycle of the GPU's PSU
+recovers it.
+
+**It only affects Wayland.** The NVIDIA X11 driver does not use this path, which
+is why Plasma X11 stays stable while Wayland does not.
+
+Do not chase these first, they are ruled out:
+
+- **Spurious interrupts.** MSI is correctly in use (`SUNXI-PCIe-MSI`, `Enable+`,
+  `NVreg_EnableMSI=1`) with zero unhandled interrupts.
+- **Power management.** Locking clocks to P0 changes nothing.
+- **Scheduling.** Happens with `rtkit` working and the KMS thread prioritised.
+
+Leading hypothesis and the work it implies: see the Wayland section of the
+[README](../README.md).
+
+---
+
+## A Wayland greeter fails: "not supported by EGL"
+
+```
+libEGL warning: failed to open /dev/dri/renderD129: Permission denied
+Failed to setup: The GPU /dev/dri/card2 chosen as primary is not supported by EGL.
+gdm3: Gdm: GdmDisplay: Session never registered, failing
+```
+
+GDM 50 runs its greeter as a **transient user** — look for `/run/user/60583/` or
+similar in the log, not the `gdm` uid. Transient users get **no supplementary
+groups**, so adding `gdm` to `video` and `render` does not help; the greeter is
+not running as `gdm`.
+
+And `uaccess` cannot help either, because this kernel lacks
+`CONFIG_TMPFS_POSIX_ACL` (see the next section).
+
+Fix: `files/udev/62-egpu-drm-access.rules`, which opens the DRM nodes to `0666`.
+
+```bash
+sudo cp files/udev/62-egpu-drm-access.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=drm
+sudo systemctl restart display-manager
+```
+
+SDDM does not hit this — its greeter is X11 and Xorg runs as root. If you would
+rather not open the nodes, that is a valid workaround; the correct fix is a
+kernel rebuilt with `CONFIG_TMPFS_POSIX_ACL=y`.
+
+---
+
 ## EGL or GBM cannot open the GPU: "Permission denied"
 
 ```

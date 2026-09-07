@@ -24,11 +24,11 @@ OpenGL version string:  4.6.0 NVIDIA 580.142
 | PCIe enumeration | ✅ | Gen1 x1 — requires a device tree overlay |
 | CUDA / compute | ✅ | Validated: context, VRAM transfers, sm_86 kernel |
 | `nvidia-smi` | ✅ | Reports the GPU and all 6144 MiB |
-| Video output (X11) | ⚠️ | Works, but **the link drops under heavy GPU load** — see below |
-| Dual monitor | ⚠️ | 5120x1440 works, same stability caveat |
+| Video output (X11) | ✅ | The stable path. Plasma X11 verified: P0, hardware GL, no flip-event bug |
+| Dual monitor | ✅ | 5120x1440 across two heads |
 | Survives reboot | ✅ | Verified end to end |
-| Wayland (GNOME 50) | ✅ | Renders on the eGPU: P0, 2047 MHz, 7001 MHz mem |
-| Wayland (Plasma 6) | ✅ | Same |
+| Wayland (GNOME 50) | ⚠️ | Renders on the eGPU, but a `nvidia_drm` flip-event bug wedges it — see below |
+| Wayland (Plasma 6) | ⚠️ | Same driver bug applies |
 | Vulkan | ❓ | Untested |
 
 ### ⚠️ Stability: the link drops under load
@@ -176,9 +176,68 @@ reads a different mechanism, so both are pre-installed:
 Both are applied in the image even when the matching desktop is not installed, so
 whichever you add later already finds the ground prepared.
 
-Also required, and both handled: `nvidia_drm modeset=1 fbdev=0`, and membership in
-the **`render`** group — see the ACL note in
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+**3. A Wayland greeter cannot get GPU access on this kernel.** GDM 50 runs its
+greeter as a **transient user** with a dynamic uid and no supplementary groups,
+so group membership cannot help it — and with `CONFIG_TMPFS_POSIX_ACL` absent
+from this kernel, `uaccess` cannot either. The greeter dies with:
+
+```
+libEGL warning: failed to open /dev/dri/renderD129: Permission denied
+Failed to setup: The GPU /dev/dri/card2 chosen as primary is not supported by EGL.
+```
+
+`files/udev/62-egpu-drm-access.rules` opens the DRM nodes to `0666`. It is a
+trade-off — any local user can then open the GPU — and the correct fix is a
+kernel rebuild with `CONFIG_TMPFS_POSIX_ACL=y`. SDDM never hit this because its
+greeter is X11 and Xorg runs as root.
+
+Also required, and all handled: `nvidia_drm modeset=1 fbdev=0`, membership in the
+**`render`** group for human *and* display-manager users, and `rtkit` so mutter
+can prioritise its KMS thread.
+
+### The Wayland ceiling: a flip-event bug in `nvidia_drm`
+
+Wayland renders correctly and looks right, but a session under real use wedges.
+This is the deepest root cause found, and it is a **driver bug**, not
+configuration:
+
+```
+WARNING: CPU: 6 PID: 773 at kernel-open/nvidia-drm/nvidia-drm-crtc.h:335
+         __nv_drm_handle_flip_event+0x188/0x194 [nvidia_drm]
+ nv_drm_handle_flip_occurred     [nvidia_drm]
+ nv_drm_event_callback           [nvidia_drm]
+ nvKmsKapiHandleEventQueueChange [nvidia_modeset]
+```
+
+The line it fires on, in `nv_drm_crtc_dequeue_flip()`:
+
+```c
+if (WARN_ON(nv_flip == NULL) || pending_events) {
+```
+
+**The driver receives more page-flip completion events than the flips it
+enqueued.** The dequeue finds an empty list. Observed **245 times** in one
+session, after which `nvidia-smi` reports `[GPU requires reset]`,
+`nvidia-modeset/kthread_q` starts spinning, and the compositor hangs. Recovery
+needs a reboot *and* a mains power cycle of the GPU's PSU.
+
+Ruled out: spurious interrupts. MSI is correctly in use (`SUNXI-PCIe-MSI`,
+`Enable+`, `NVreg_EnableMSI=1`) with zero unhandled interrupts.
+
+**Leading hypothesis.** On Ampere, display events arrive from the GSP firmware
+through a queue in system memory that the GPU writes by DMA. This platform is
+**non-coherent**. Without correct cache invalidation on that queue the driver can
+read stale entries and process the same event twice — exactly this symptom. And
+the gap is verifiable: **none of the five non-coherence patches touch
+`nvidia-drm`, `nvidia-modeset` or the `kapi` path.** They cover the RM and the
+GSP message queue, which is why compute is rock solid and display is not.
+
+Fixing it means extending cache maintenance into the KMS event path. It is also
+worth reporting upstream — it is NVIDIA's own `WARN_ON`, firing on a
+non-coherent Arm platform.
+
+**Until then: X11 is the reliable path.** The NVIDIA X11 driver does not go
+through `nv_drm_handle_flip_event`.
 
 ### Slow shutdown
 

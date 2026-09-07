@@ -118,12 +118,27 @@ echo "== GPU device access =="
 # Sem ACL, o acesso a GPU depende inteiramente de grupo. E facil passar
 # desapercebido porque card2 e root:video (o usuario normalmente esta em
 # video) mas renderD* e root:render -- e sem o render node o EGL/GBM falha.
+# Usuarios humanos...
 for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do
-    if usermod -aG video,render "$u" 2>/dev/null; then
-        say "$u -> grupos video, render"
-    fi
+    usermod -aG video,render "$u" 2>/dev/null && say "$u -> video, render"
+done
+# ...e os usuarios de sistema dos display managers. Um greeter Wayland roda
+# como usuario nao-root e precisa abrir a GPU. Isto ficou de fora da primeira
+# versao deste script, que so olhava uid >= 1000.
+for u in gdm sddm lightdm; do
+    id "$u" >/dev/null 2>&1 && usermod -aG video,render "$u" 2>/dev/null \
+        && say "$u -> video, render (usuario de display manager)"
 done
 say "(mudanca de grupo vale a partir do proximo login)"
+
+echo "== Acesso DRM sem ACL nem grupo =="
+install -m 644 "$F/udev/62-egpu-drm-access.rules" /etc/udev/rules.d/
+udevadm control --reload-rules >/dev/null 2>&1 || true
+udevadm trigger --subsystem-match=drm >/dev/null 2>&1 || true
+say "/etc/udev/rules.d/62-egpu-drm-access.rules"
+say "  necessario porque o greeter do GDM roda como usuario TRANSITORIO,"
+say "  sem grupos suplementares -- e sem CONFIG_TMPFS_POSIX_ACL o uaccess"
+say "  tambem nao funciona. Ver comentarios na regra."
 
 echo "== Module backup =="
 mkdir -p /root/egpu-backup
