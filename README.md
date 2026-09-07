@@ -67,6 +67,29 @@ The GPU needs its own power supply. The Orange Pi cannot feed a discrete card.
 
 ### 1. Flash the prebuilt image
 
+> ### ⚠️ Known defect in image v1.0
+>
+> **SSH does not start on first boot.** The sanitisation removed
+> `/etc/ssh/ssh_host_*` without arming regeneration, so `sshd` fails and port 22
+> stays closed. Everything else boots — `xrdp` on 3389 is reachable.
+>
+> Recover from a local terminal (or over RDP):
+> ```bash
+> sudo ssh-keygen -A
+> sudo systemctl enable --now ssh
+> ```
+>
+> Also note the text console lands on the **NVIDIA** framebuffer even though eGPU
+> video ships disabled, because the 580 driver defaults to `fbdev=1`. If your
+> monitor is on the GPU you will see only a blinking cursor while the desktop is
+> on the Allwinner HDMI. Fix with:
+> ```bash
+> echo 'options nvidia_drm modeset=1 fbdev=0' | sudo tee /etc/modprobe.d/egpu-nofbdev.conf
+> ```
+>
+> A corrected image will replace v1.0. Track it in the issues.
+
+
 The fastest path. See [releases](../../releases). The image behaves like any
 official Orange Pi image: flash it, boot, and the filesystem expands to fill your
 card automatically.
