@@ -6,6 +6,17 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 
 ## Phase 0 — Consolidate Gen2 (low risk)
 
+> **Status 2026-09-08.** Step 1 done: the v1.2 image is built, sanitised,
+> verified and split, ready to publish (`docs/RELEASE-NOTES-v1.2.md`). Step 2 in
+> progress: the kernel cross-compiles cleanly with GCC 11.5 (same module set and
+> vermagic as the card), but the first build **did not boot** on the test card.
+> The only material difference from the vendor binary was `CONFIG_RELR=y`
+> (RELR relocation packing, auto-enabled because the host linker supports it;
+> the vendor toolchain did not). A relink without RELR gives an `Image` within
+> 2 KB of the vendor's size and is the next thing to test; a rebuild with the
+> exact Arm GNU Toolchain 11.2-2022.02 is the fallback. Lesson: match the
+> vendor's linker, not just the compiler series.
+
 1. **Ship a new image from the board's current state.** The published release
    still carries the Gen1 overlay. Same process as before: shrink, sanitise with
    globs (Chrome backup profiles, `shadow-`), split into 2 GB parts, publish as
