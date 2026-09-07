@@ -30,10 +30,17 @@ usar_integrada() {
 
 # ------------------------------------------------------------------- nvidia
 usar_nvidia() {
-    # fbdev=1 leva o console para a mesma saida que tem monitor.
-    if [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" != "nvidia-drmdrmfb" ]; then
+    # fbdev=0 SEMPRE -- inclusive quando o monitor esta na GPU.
+    #
+    # A tentacao e obvia: se o monitor esta na eGPU, por que nao levar o
+    # console de texto para lá tambem? Porque a emulacao fbdev do DRM segura
+    # o framebuffer e o servidor grafico nao consegue assumir o display. O que
+    # aparece na tela e o console -- um traco no canto, ou texto distorcido --
+    # com o Xorg rodando saudavel ao lado, sem nenhum erro no log.
+    # Custou tres diagnosticos errados antes de eu perceber.
+    if [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" = "nvidia-drmdrmfb" ]; then
         rmmod nvidia_drm 2>/dev/null || true
-        modprobe nvidia_drm modeset=1 fbdev=1 || true
+        modprobe nvidia_drm modeset=1 fbdev=0 || true
     fi
     install -m 644 "$CANON" "$LIVE"
     logger -t egpu-video-apply "monitor detectado na NVIDIA ($1) -- desktop e console na GPU"
