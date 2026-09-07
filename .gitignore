@@ -3,3 +3,7 @@
 *.img.xz.*
 *.dtbo
 *.sha256
+
+# Biblioteca proprietaria da NVIDIA -- NAO redistribuir.
+# files/nvidia-extra/README.md explica como obter do instalador oficial.
+files/nvidia-extra/*.so*

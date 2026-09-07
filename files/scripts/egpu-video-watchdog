@@ -1,79 +1,85 @@
 #!/bin/sh
-# Reverte a saida de video pela eGPU se o servidor X nao estiver respondendo.
+# Reverte a saida de video pela eGPU -- SOMENTE diante da assinatura real da
+# falha que justifica sua existencia.
 #
-# CUIDADO -- historico: a versao anterior sondava "xdpyinfo -display :0" e
-# chamava "systemctl restart lightdm". Numa maquina com GNOME/GDM isso e
-# destrutivo em dobro: a sonda falha SEMPRE (a sessao e Wayland, nao existe X
-# em :0), e o restart sobe o lightdm em paralelo ao gdm. Dois compositores
-# disputando o mesmo seat0 travam a sessao e o logind passa a recusar login
-# com "session already running".
+# HISTORICO, porque importa: a primeira versao revertia sempre que NAO
+# conseguia confirmar que o X estava bom. Isso e o oposto de fail-safe, e
+# quebrou o sistema tres vezes:
 #
-# Regras derivadas disso:
-#   1. so agir se a NOSSA config X11 estiver instalada
-#   2. nao concluir nada a partir do X quando a sessao e Wayland
-#   3. nunca nomear um display manager -- usar display-manager.service
+#   1. Sondava ":0" numa maquina com GDM/Wayland (onde nao existe X em :0),
+#      concluia que o X travou e subia o lightdm em PARALELO ao gdm. Dois
+#      compositores no mesmo seat0: sessao travada e logind recusando login
+#      com "session already running".
+#   2. Procurava o arquivo de autorizacao do X em caminhos fixos do lightdm.
+#      Com SDDM (/run/sddm/xauth_*) a sonda falhava sempre -> revertia.
+#   3. Apagava /etc/X11/xorg.conf nesses casos, derrubando a saida da eGPU
+#      num sistema que estava perfeitamente saudavel.
+#
+# Regras que essa historia impoe:
+#   - Nao saber = NAO AGIR. Toda incerteza termina em exit 0.
+#   - So reverter diante da falha OBSERVADA: Xorg ausente, ou Xorg girando
+#     quente sem responder (o estado Rs+ ~70% de CPU que vimos de verdade).
+#   - Descobrir o -auth do proprio processo Xorg. Nunca adivinhar caminho.
+#   - Nunca nomear um display manager. Sempre display-manager.service.
 set -eu
 
 LIVE=/etc/X11/xorg.conf
+log() { logger -t egpu-video-watchdog "$1"; }
 
-# 1. Nossa config X11 esta ativa? Se nao, nada disso e da nossa conta.
-if [ ! -f "$LIVE" ] || ! grep -q egpu-layout "$LIVE"; then
-    exit 0
-fi
+# A NOSSA config esta ativa? Se nao, nada aqui e da nossa conta.
+[ -f "$LIVE" ] && grep -q egpu-layout "$LIVE" || exit 0
 
-# 2. Qual o tipo da sessao grafica no seat0?
-tipo_sessao_seat0() {
-    for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
-        [ "$(loginctl show-session "$s" -p Seat --value 2>/dev/null)" = "seat0" ] || continue
-        T=$(loginctl show-session "$s" -p Type --value 2>/dev/null)
-        case "$T" in wayland|x11) echo "$T"; return 0 ;; esac
-    done
-    echo none
-}
-
-TIPO=$(tipo_sessao_seat0)
-
-case "$TIPO" in
-    wayland)
-        # A config X11 e irrelevante aqui e a sonda nao diz nada.
-        logger -t egpu-video-watchdog "sessao Wayland ativa no seat0; nada a verificar"
+# Sessao Wayland: a config X11 e irrelevante e sondar o X nao diz nada.
+for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+    [ "$(loginctl show-session "$s" -p Seat --value 2>/dev/null)" = "seat0" ] || continue
+    if [ "$(loginctl show-session "$s" -p Type --value 2>/dev/null)" = "wayland" ]; then
+        log "sessao Wayland no seat0; nada a verificar"
         exit 0
-        ;;
-    none)
-        # Nenhuma sessao grafica. Pode ser falha real -- ou o boot ainda esta
-        # em curso. Damos mais tempo antes de mexer.
-        sleep 30
-        [ "$(tipo_sessao_seat0)" = "none" ] || exit 0
-        logger -t egpu-video-watchdog "nenhuma sessao grafica no seat0 -- revertendo"
-        /usr/local/sbin/egpu-video-disable --rollback
-        exit 0
-        ;;
-esac
+    fi
+done
 
-# 3. Sessao X11: agora a sonda faz sentido.
+# --- Assinatura 1: nenhum Xorg, e o display manager desistiu -------------
+# Um DM saudavel reinicia o X sozinho. So e falha se ele proprio ja falhou.
 if ! pgrep -x Xorg >/dev/null 2>&1; then
-    logger -t egpu-video-watchdog "sessao x11 sem processo Xorg -- revertendo"
-    /usr/local/sbin/egpu-video-disable --rollback
+    if systemctl is-failed --quiet display-manager.service 2>/dev/null; then
+        log "sem Xorg e display-manager em falha -- revertendo"
+        /usr/local/sbin/egpu-video-disable --rollback
+    else
+        log "sem Xorg mas o display manager nao falhou; aguardando (nada feito)"
+    fi
     exit 0
 fi
 
-for _ in 1 2 3; do
-    for AUTH in /var/run/lightdm/root/:0 /run/lightdm/root/:0 /home/orangepi/.Xauthority; do
-        [ -e "$AUTH" ] || continue
-        if XAUTHORITY="$AUTH" timeout 10 xdpyinfo -display :0 >/dev/null 2>&1; then
-            logger -t egpu-video-watchdog "X respondendo na eGPU"
-            exit 0
-        fi
-    done
+# --- Assinatura 2: Xorg girando quente sem responder ---------------------
+# Quando o driver NVIDIA aborta, o processo NAO sai: fica em Rs+ queimando
+# CPU e para de aceitar conexoes. E a unica falha que este watchdog viu.
+PID=$(pgrep -x Xorg | head -1)
+STAT=$(ps -o stat= -p "$PID" 2>/dev/null | tr -d ' ')
+CPU=$(ps -o pcpu= -p "$PID" 2>/dev/null | tr -d ' ' | cut -d. -f1)
+case "$STAT" in R*) ;; *) log "Xorg em estado '$STAT' (normal); nada feito"; exit 0 ;; esac
+[ "${CPU:-0}" -ge 50 ] 2>/dev/null || { log "Xorg em R mas com ${CPU:-?}% de CPU; nada feito"; exit 0; }
+
+# Girando quente. Confirmar que nao responde -- com o auth do proprio processo.
+AUTH=$(ps -o args= -p "$PID" 2>/dev/null | grep -oE '\-auth [^ ]+' | head -1 | cut -d' ' -f2 || true)
+if [ -z "$AUTH" ] || [ ! -e "$AUTH" ]; then
+    # Sem como sondar com seguranca: nao inventar conclusao.
+    log "Xorg quente mas nao achei o -auth; NAO vou reverter as cegas"
+    exit 0
+fi
+
+i=0
+while [ "$i" -lt 3 ]; do
+    if XAUTHORITY="$AUTH" timeout 10 xdpyinfo -display :0 >/dev/null 2>&1; then
+        log "Xorg responde (${CPU}% de CPU e carga real, nao travamento)"
+        exit 0
+    fi
+    i=$((i + 1))
     sleep 10
 done
 
-logger -t egpu-video-watchdog "X travado ou sem resposta -- revertendo para o HDMI do Orange Pi"
-
-# O Xorg travado ignora SIGTERM; matar direto antes de reverter.
+log "Xorg girando a ${CPU}% e sem responder a 3 sondagens -- revertendo"
 systemctl stop display-manager.service >/dev/null 2>&1 || true
 sleep 3
 pkill -9 -x Xorg >/dev/null 2>&1 || true
 sleep 2
-
 /usr/local/sbin/egpu-video-disable --rollback

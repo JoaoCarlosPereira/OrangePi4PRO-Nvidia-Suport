@@ -1,0 +1,71 @@
+#!/bin/bash
+# Instala o desktop e o idioma -- o que NAO pode ser embutido na imagem,
+# porque exige rede e a imagem e aarch64 (nao ha chroot cross-arch).
+#
+# Rode uma vez, com rede, depois do primeiro boot.
+#
+# Cada pacote aqui existe porque a falta dele custou um diagnostico:
+#   plasma-session-x11  o kde-plasma-desktop puxa SO a sessao Wayland
+#   kwin-x11            idem: sem ele a sessao sobe SEM window manager
+#                       (plasmashell aparece, nenhuma janela e gerenciada)
+#   language-pack-pt*   o sistema vem com de/en/es/fr, sem portugues
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "rode como root: sudo $0"; exit 1; }
+
+DE=${1:-plasma}
+export DEBIAN_FRONTEND=noninteractive
+
+echo "== atualizando listas =="
+apt-get update -qq
+
+case "$DE" in
+  plasma)
+    echo "== Plasma (X11 + Wayland) =="
+    apt-get install -y kde-plasma-desktop sddm \
+        plasma-session-x11 kwin-x11 \
+        plasma-workspace-wallpapers kwin-addons \
+        kde-config-gtk-style breeze-gtk-theme \
+        plasma-nm plasma-pa powerdevil plasma-discover
+    echo "/usr/bin/sddm" > /etc/X11/default-display-manager
+    systemctl enable sddm
+    install -d /etc/sddm.conf.d
+    printf '[General]\nDisplayServer=x11\n' > /etc/sddm.conf.d/10-egpu-x11.conf
+    ;;
+  xfce)
+    echo "== XFCE (X11) =="
+    apt-get install -y xfce4 lightdm
+    ;;
+  *) echo "uso: $0 [plasma|xfce]"; exit 1 ;;
+esac
+
+echo "== idioma pt_BR =="
+apt-get install -y language-pack-pt language-pack-pt-base || true
+[ "$DE" = plasma ] && apt-get install -y language-pack-kde-pt || true
+localectl set-locale LANG=pt_BR.UTF-8 || true
+grep -q '^LANGUAGE=' /etc/default/locale \
+  && sed -i 's|^LANGUAGE=.*|LANGUAGE=pt_BR:pt:en|' /etc/default/locale \
+  || echo 'LANGUAGE=pt_BR:pt:en' >> /etc/default/locale
+
+echo "== acesso a GPU por grupo =="
+# O kernel vendor nao tem CONFIG_TMPFS_POSIX_ACL, entao o uaccess do systemd
+# falha e o acesso a GPU depende so de grupo. Sem 'render', EGL/GBM falha.
+for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do
+    usermod -aG video,render "$u" 2>/dev/null && echo "  $u -> video, render"
+done
+
+echo "== OnFailure para o display manager instalado =="
+for dm in sddm lightdm gdm3; do
+    if [ -f "/lib/systemd/system/$dm.service" ] || [ -f "/usr/lib/systemd/system/$dm.service" ]; then
+        install -d "/etc/systemd/system/$dm.service.d"
+        printf '[Unit]\nOnFailure=egpu-video-rollback.service\n' \
+            > "/etc/systemd/system/$dm.service.d/egpu-rollback.conf"
+        echo "  $dm"
+    fi
+done
+systemctl daemon-reload
+
+echo
+echo "Pronto. Reinicie e escolha a sessao no login."
+echo "  Wayland exige o backend GBM da NVIDIA -- ver egpu-fix-gbm(README)."
+echo "Nota: a traducao do KDE disponivel e da 24.04; partes do Plasma 6.6"
+echo "      (Configuracoes do Sistema, Kate, Konsole) ficam em ingles."
