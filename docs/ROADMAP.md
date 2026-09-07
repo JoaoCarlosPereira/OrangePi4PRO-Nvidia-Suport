@@ -6,20 +6,19 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 
 ## Phase 0 — Consolidate Gen2 (low risk)
 
-> **Status 2026-09-08.** Step 1 done: the v1.2 image is built, sanitised,
-> verified and split, ready to publish (`docs/RELEASE-NOTES-v1.2.md`). Step 2:
-> the kernel cross-compiles cleanly (same 319 modules and vermagic as the card),
-> but three test boots failed — because the `uImage` had been wrapped with
-> `mkimage -A arm64`. The A733's vendor U-Boot is 32-bit and its `bootm`
-> silently rejects a legacy image tagged AArch64; the vendor wraps the arm64
-> `Image` with **`-A arm`**. RELR packing and the toolchain were red herrings,
-> although the final build uses the exact Arm GNU Toolchain 11.2-2022.02 with
-> RELR off to stay byte-for-byte comparable. A second real finding: the DTB in
-> `/boot` (built July) differs in 648 lines from the one compiled from the
-> GitHub tree (April): CPU OPP tables, GPU power domain, USB `res_dcap` clocks.
-> The public tree is not the tree that built the shipped kernel, so a rebuilt
-> kernel must ship with its own DTB (matched pair), which the eGPU overlays
-> apply to unchanged.
+> **Status 2026-09-08.** Step 1: the v1.2 image was built, sanitised and
+> verified, but will not be published — v1.3 will ship once the rebuilt kernel
+> is in it. Step 2 **done**: the kernel cross-built with the vendor's Arm GNU
+> Toolchain 11.2-2022.02 (RELR off, `mkimage -A arm`, DTB from the same tree)
+> boots on both cards. On the Gen2 card: 410/418 MB/s host↔GPU (was 398 with
+> the NSI cap), CUDA passes, 200 probes clean, cpufreq 1.8/2.0 GHz, and the
+> driver now logs the measured speed with no "Speed change timeout". Three
+> test boots failed first because the `uImage` was tagged AArch64; the vendor
+> U-Boot is 32-bit and wants `-A arm`. Second finding: the DTB in `/boot`
+> (built July) differs in 648 lines from the GitHub tree (April), so a rebuilt
+> kernel must ship with its own DTB. Recipe: `tools/kernel/build-kernel.sh`.
+> Phase 3 step 3 is staged: the test card carries the U-Boot boot package with
+> the `dc1sw1` fix (readback-verified), awaiting a boot test.
 
 1. **Ship a new image from the board's current state.** The published release
    still carries the Gen1 overlay. Same process as before: shrink, sanitise with
