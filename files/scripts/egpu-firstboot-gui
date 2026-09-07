@@ -51,9 +51,10 @@ case "$RAW" in
     sh -c "$SUDO /usr/local/sbin/egpu-install-to-disk --yes --no-reboot $DEV" 2>&1 | tr '\r' '\n' \
       | awk '/^STAGE: /{sub(/^STAGE: /,""); print "# " $0; fflush(); next}
              /^partition   :|^done\./{print "# " $0; fflush(); next}
-             match($0,/[0-9]+%/){print substr($0,RSTART,RLENGTH-1); fflush()}' \
+             match($0,/[0-9]+%/){print substr($0,RSTART,RLENGTH-1); fflush()}
+             END{print "100"}' \
       | zenity --progress --title="Installing the system to $DEV" --text="Preparing $DEV..." \
-               --percentage=0 --no-cancel --width=560 2>/dev/null
+               --percentage=0 --no-cancel --auto-close --width=560 2>/dev/null
     if as_root grep -q "^done\." $LOG 2>/dev/null; then
         zenity --info --title="Installed" --width=460 --text="The system was copied to $DEV.\n$BOOT keeps /boot and stays as fallback (egpu-install-to-disk --revert).\n\nThe board will reboot now." 2>/dev/null
         as_root systemctl reboot
