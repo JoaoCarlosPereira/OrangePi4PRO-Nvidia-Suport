@@ -1,9 +1,17 @@
 #!/bin/bash
 # Installs the eGPU support files on an Orange Pi 4 Pro.
 #
-# This installs the plumbing only: boot services, helper commands, Xorg layout
-# and upgrade shielding. It does NOT build the NVIDIA driver and does NOT touch
-# the device tree overlays -- do those first, following docs/TUTORIAL.md.
+# Installs boot services, helper commands, Xorg layout, upgrade shielding, the
+# PCIe device tree overlays (Gen2 + high-memory aperture) and the rebuilt U-Boot
+# package into the card's boot area and the vendor .deb. It does NOT build the
+# NVIDIA driver -- see docs/TUTORIAL.md Part 2 for that.
+#
+# Options (environment variables):
+#   EGPU_KERNEL=/path/kernel-6.6.98-sun60iw2-egpu.tar.gz   also install the rebuilt kernel
+#                (release asset; tools/kernel/install-kernel.sh, restorable)
+#   EGPU_UBOOT_SPI=1   also flash the fixed U-Boot into the SPI NOR (needed to boot
+#                      without a microSD; boot0 untouched, readback-verified)
+#   EGPU_SKIP_OVERLAYS=1 / EGPU_SKIP_UBOOT=1   leave those parts alone
 #
 # Safe to re-run.
 set -euo pipefail
@@ -37,6 +45,56 @@ for s in "$F"/scripts/egpu-*; do
     install -m 755 "$s" /usr/local/sbin/
     say "$(basename "$s")"
 done
+install -m 755 "$HERE/tools/kernel/install-kernel.sh" /usr/local/sbin/egpu-install-kernel
+install -m 755 "$HERE/tools/uboot/install-uboot.sh"   /usr/local/sbin/egpu-install-uboot
+install -d /usr/local/share/egpu
+install -m 644 "$F/uboot/boot_package-dc1sw1.fex" /usr/local/share/egpu/
+say "egpu-install-kernel, egpu-install-uboot, /usr/local/share/egpu/boot_package-dc1sw1.fex"
+
+echo "== PCIe device tree overlays (Gen2 + 512 MiB prefetchable aperture) =="
+if [ -z "${EGPU_SKIP_OVERLAYS:-}" ]; then
+    command -v dtc >/dev/null || apt-get install -y -q device-tree-compiler >/dev/null
+    install -d /boot/overlay-user
+    for o in egpu-pcie-gen2 egpu-pcie-highmem egpu-pcie-gen1; do
+        dtc -@ -q -I dts -O dtb -o "/boot/overlay-user/$o.dtbo" "$F/overlays/$o.dts"
+        say "/boot/overlay-user/$o.dtbo"
+    done
+    ENV=/boot/orangepiEnv.txt
+    [ -f "$ENV.before-egpu" ] || cp "$ENV" "$ENV.before-egpu"
+    if grep -q '^user_overlays=' "$ENV"; then
+        sed -i 's/^user_overlays=.*/user_overlays=egpu-pcie-gen2 egpu-pcie-highmem/' "$ENV"
+    else
+        printf '\nuser_overlays=egpu-pcie-gen2 egpu-pcie-highmem\n' >> "$ENV"
+    fi
+    say "$ENV: user_overlays=egpu-pcie-gen2 egpu-pcie-highmem (backup: $ENV.before-egpu)"
+    say "  Gen1 overlay installed too, for fallback; Gen3 halts the NVIDIA GSP -- see docs/PCIE-LINK-SPEED.md"
+    say "  power-cycle the GPU's PSU before the next boot: the GPU remembers the host's previous max speed"
+else
+    say "skipped (EGPU_SKIP_OVERLAYS)"
+fi
+
+echo "== U-Boot with the M.2 power-rail fix =="
+if [ -z "${EGPU_SKIP_UBOOT:-}" ]; then
+    PKG=/usr/local/share/egpu/boot_package-dc1sw1.fex /usr/local/sbin/egpu-install-uboot sd  | sed 's/^/  /'
+    PKG=/usr/local/share/egpu/boot_package-dc1sw1.fex /usr/local/sbin/egpu-install-uboot deb | sed 's/^/  /'
+    if [ -n "${EGPU_UBOOT_SPI:-}" ]; then
+        command -v mtd_debug >/dev/null || apt-get install -y -q mtd-utils >/dev/null
+        PKG=/usr/local/share/egpu/boot_package-dc1sw1.fex /usr/local/sbin/egpu-install-uboot spi | sed 's/^/  /'
+    else
+        say "SPI NOR left alone (set EGPU_UBOOT_SPI=1 to enable booting without a microSD)"
+    fi
+else
+    say "skipped (EGPU_SKIP_UBOOT)"
+fi
+
+echo "== Kernel =="
+if [ -n "${EGPU_KERNEL:-}" ]; then
+    /usr/local/sbin/egpu-install-kernel "$EGPU_KERNEL" | sed 's/^/  /'
+else
+    say "vendor kernel kept. To install the rebuilt one (measured link speed in the log, NSI cap lifted):"
+    say "  download kernel-6.6.98-sun60iw2-egpu.tar.gz from the release, then"
+    say "  sudo EGPU_KERNEL=/path/to/it $0   (or: sudo egpu-install-kernel /path/to/it)"
+fi
 
 echo "== Xorg =="
 install -d /etc/X11/xorg.conf.d

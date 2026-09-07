@@ -23,6 +23,12 @@ without a screen.
 
 # Part 1 — Get the GPU onto the PCIe bus
 
+> **Shortcut.** `sudo ./install.sh` now compiles and installs the overlays of
+> this part, sets `user_overlays`, and installs the fixed U-Boot package. The
+> steps below explain what it does; run them by hand only if you want to see
+> each piece.
+
+
 Nothing else matters until `lspci` shows the card. Out of the box it will not.
 
 ## 1.1 Cap the link at Gen2
