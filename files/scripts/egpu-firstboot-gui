@@ -16,9 +16,9 @@ mapfile -t CANDS < <(echo "$LIST" | awk -F'|' '/^  \/dev/ {gsub(/^ +/,"",$1); pr
 ROWS=(keep "Keep running from $BOOT" "")
 for c in "${CANDS[@]}"; do IFS='|' read -r dev size tran model <<<"$c"; ROWS+=("$dev" "Install the system to $dev (ERASES IT)" "$size $tran $model"); done
 ROWS+=(later "Ask again on the next boot" "")
-CHOICE=$(zenity --list --title="Orange Pi 4 Pro eGPU image — first boot" --width=720 --height=330 \
+CHOICE=$(zenity --list --timeout=180 --title="Orange Pi 4 Pro eGPU image — first boot" --width=720 --height=330 \
   --text="The ROM boots only from microSD or USB 2.0. Linux can run the system from a faster disk (USB-C SSD, NVMe) while $BOOT keeps /boot." \
-  --column=id --column=Choice --column=Disk --hide-column=1 --print-column=1 "${ROWS[@]}" 2>/dev/null) || CHOICE=keep
+  --column=id --column=Choice --column=Disk --hide-column=1 --print-column=1 "${ROWS[@]}" 2>/dev/null); [ -n "$CHOICE" ] || CHOICE=keep
 case "$CHOICE" in
   later) exit 0;;
   /dev/*)

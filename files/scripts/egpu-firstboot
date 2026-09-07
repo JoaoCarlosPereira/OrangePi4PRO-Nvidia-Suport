@@ -13,11 +13,13 @@ BOOT=$(/usr/local/sbin/egpu-install-to-disk --list 2>/dev/null | sed -n 's/^boot
 ITEMS=(keep "Keep running from $BOOT (default)")
 for c in "${CANDS[@]}"; do IFS='|' read -r dev size tran model <<<"$c"; ITEMS+=("$dev" "Install the system to $dev  $size $tran $model  (ERASES IT)"); done
 ITEMS+=(later "Ask again on the next boot")
-CHOICE=$(whiptail --title "Orange Pi 4 Pro eGPU image" --timeout 60 --default-item keep \
-    --menu "The ROM boots only from microSD/USB 2.0. Linux can run the system from a faster disk\nwhile $BOOT keeps /boot. Choose:" 20 78 8 "${ITEMS[@]}" 3>&1 1>&2 2>&3) || CHOICE=keep
+# A timeout or Esc leaves the flag alone: the console may not be visible (desktop on the
+# NVIDIA card, no framebuffer), so the desktop dialog (egpu-firstboot-gui) gets its turn.
+CHOICE=$(whiptail --title "Orange Pi 4 Pro eGPU image" --timeout 30 --default-item keep \
+    --menu "The ROM boots only from microSD/USB 2.0. Linux can run the system from a faster disk\nwhile $BOOT keeps /boot. Choose:" 20 78 8 "${ITEMS[@]}" 3>&1 1>&2 2>&3) || exit 0
 case "$CHOICE" in
-    later) exit 0;;
-    keep|"") touch $FLAG; exit 0;;
+    later|"") exit 0;;
+    keep) touch $FLAG; exit 0;;
     /dev/*)
         if whiptail --title "Confirm" --yesno "ALL DATA ON $CHOICE WILL BE ERASED.\n\nThe system will be copied there and the board reboots into it.\n$BOOT stays as boot medium and fallback.\n\nContinue?" 14 70; then
             clear; /usr/local/sbin/egpu-install-to-disk --yes "$CHOICE" || { echo; echo "install failed; press Enter"; read -r _; }
