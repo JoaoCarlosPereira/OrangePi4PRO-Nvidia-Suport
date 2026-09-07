@@ -32,4 +32,16 @@ rebuilt U-Boot with the M.2 power-rail fix is documented separately in
 
 ## Files
 
-Filled in at publication.
+```
+orangepi4pro-egpu.img.xz.part-0   2097152000 bytes
+orangepi4pro-egpu.img.xz.part-1   1412022620 bytes
+orangepi4pro-egpu.img.xz.sha256   8b4b3903310f7788e3685601ba570bbc637a9d1e17e7829c10dc0898e29e8095
+```
+
+```bash
+cat orangepi4pro-egpu.img.xz.part-* > orangepi4pro-egpu.img.xz
+sha256sum -c orangepi4pro-egpu.img.xz.sha256
+xz -dc orangepi4pro-egpu.img.xz | sudo dd of=/dev/sdX bs=4M status=progress
+```
+
+Uncompressed: 14672920576 bytes (13.6 GB root partition + 32 MiB boot area).
