@@ -1,15 +1,30 @@
 [Unit]
 Description=Regenera as chaves de host SSH se estiverem ausentes
 Documentation=man:ssh-keygen(1)
+
+# A distro ja traz sshd-keygen.service, mas ele nao e confiavel aqui:
+#   - ConditionFirstBoot=yes  -> so tenta no primeiro boot, nunca mais
+#   - ConditionPathIsReadWrite=/etc/ssh -> falha se /etc ainda estiver ro
+#   - ssh.socket o declara em Wants= mas NAO em Before=, entao ele pode ser
+#     puxado cedo, ter a condicao negada e ser PULADO em silencio
+# Condicao negada nao e falha: o systemd nao retenta, e o sistema fica sem
+# chaves. Sem chaves o sshd nao inicia, o socket ativado bate o trigger limit
+# e a porta 22 para de escutar -- perdendo o unico canal de recuperacao.
+#
+# Esta unidade cobre QUALQUER boot em que as chaves faltem, e roda tarde o
+# suficiente para /etc estar gravavel.
 ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
-Before=ssh.service ssh.socket
-Wants=ssh.service
+After=local-fs.target
+Before=ssh.service ssh.socket sshd.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/ssh-keygen -A
-ExecStartPost=/bin/sh -c 'systemctl try-restart ssh.service 2>/dev/null || true'
+# Se o socket ja tinha batido o trigger limit antes de chegarmos aqui, ele
+# esta parado e nao volta sozinho.
+ExecStartPost=-/usr/bin/systemctl reset-failed ssh.socket ssh.service
+ExecStartPost=-/usr/bin/systemctl start ssh.socket
 
 [Install]
 WantedBy=multi-user.target

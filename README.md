@@ -24,11 +24,71 @@ OpenGL version string:  4.6.0 NVIDIA 580.142
 | PCIe enumeration | ✅ | Gen1 x1 — requires a device tree overlay |
 | CUDA / compute | ✅ | Validated: context, VRAM transfers, sm_86 kernel |
 | `nvidia-smi` | ✅ | Reports the GPU and all 6144 MiB |
-| Video output (X11) | ✅ | 2560x1440 @ 144 Hz, hardware GL |
-| Dual monitor | ✅ | 5120x1440 across two heads |
+| Video output (X11) | ⚠️ | Works, but **the link drops under heavy GPU load** — see below |
+| Dual monitor | ⚠️ | 5120x1440 works, same stability caveat |
 | Survives reboot | ✅ | Verified end to end |
 | Wayland | ❓ | Untested |
 | Vulkan | ❓ | Untested |
+
+### ⚠️ Stability: the link drops under load
+
+**This is the most important thing to know before relying on this setup.**
+
+A light desktop is stable. Starting a browser, or anything that creates and
+destroys GL objects in bulk, can take the PCIe link down. When that happens the
+GPU disappears from the bus and **the whole board freezes** — display, SSH, and
+all. Only a hard reset recovers it, and the reset then leaves the GPU wedged
+until its PSU is power-cycled.
+
+The captured failure chain:
+
+```
+NVRM: _issueRpcAndWait: rpcSendMessage failed with status 0x0000000f for fn 10
+NVRM: rpcRmApiFree_GSP: GspRmFree failed: ... status=0x0000000f
+nvidia-modeset: ERROR: GPU:0: Failed to query display engine channel state
+(EE) NVIDIA(0): Failed to allocate push buffer
+(EE) NVIDIA(0): Error recovery failed.  *** Aborting ***
+nvidia-modeset: ERROR: GPU:0: Error while waiting for GPU progress   ← forever, every 5 s
+```
+
+`0x0000000f` is **`NV_ERR_GPU_IS_LOST` — "GPU lost from the bus"**. The GSP RPC did
+not fail because of a driver bug; it failed because the device stopped answering.
+
+**It is a physical problem, not a software one.** The root port's AER status shows
+receiver errors:
+
+```
+DevSta: CorrErr+
+CESta:  RxErr+ BadTLP- BadDLLP- Rollover- Timeout-
+```
+
+`RxErr` is a physical-layer error — corrupted symbols on the wire. Measured: after
+clearing the sticky bits, **three minutes at idle accumulate zero errors**. The
+link is electrically clean when quiet and degrades under traffic. That also
+explains the `Speed change timeout` on every boot and the intermittent
+enumeration: this link is marginal at Gen1 x1 and cannot train higher.
+
+**What to try, in order of likely impact:**
+
+1. **Bond the grounds.** The board and the GPU run from two independent power
+   supplies. Without a solid common ground the differential reference floats, and
+   receiver errors follow. Tie the ATX PSU's COM/chassis to the board's ground.
+   This is the classic cause of exactly this signature on eGPU builds.
+2. **Reseat both ends of the riser, then try a shorter or better one.** Cable
+   quality dominates at these lengths.
+3. **Route the riser away from power cables and do not coil it tightly.**
+4. **Check the PCIe/12 V connectors** on the card and the PSU's quality.
+
+Measure whether a change helped — clear the counters, use the machine, re-read:
+
+```bash
+sudo setpci -s 00:00.0 0x110.L=0xffffffff        # clear
+# ... use the desktop ...
+sudo lspci -vv -s 00:00.0 | grep CESta            # RxErr- means clean
+```
+
+No software setting fixes signal integrity. ASPM was already disabled on both
+ends, so that avenue is closed.
 
 ### Performance ceiling
 
