@@ -13,9 +13,11 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 > The only material difference from the vendor binary was `CONFIG_RELR=y`
 > (RELR relocation packing, auto-enabled because the host linker supports it;
 > the vendor toolchain did not). A relink without RELR gives an `Image` within
-> 2 KB of the vendor's size and is the next thing to test; a rebuild with the
-> exact Arm GNU Toolchain 11.2-2022.02 is the fallback. Lesson: match the
-> vendor's linker, not just the compiler series.
+> 2 KB of the vendor's size; a second rebuild with the exact Arm GNU Toolchain
+> 11.2-2022.02 (GCC 11.2.1, binutils 2.37, no RELR) also completed with the
+> same 319 modules and vermagic. Both candidates are staged on the PC and wait
+> for the test card (`/home/joao/kernel-build/fix-testcard.sh`). Lesson: match
+> the vendor's linker, not just the compiler series.
 
 1. **Ship a new image from the board's current state.** The published release
    still carries the Gen1 overlay. Same process as before: shrink, sanitise with
