@@ -21,11 +21,13 @@ if [ "$ROLLBACK" -eq 0 ]; then
         rmmod nvidia_drm 2>/dev/null || true
         modprobe nvidia_drm modeset=1 fbdev=0 2>/dev/null || true
     fi
-    echo "Fixado no HDMI do Orange Pi. Aplique com: systemctl restart lightdm"
+    echo "Fixado no HDMI do Orange Pi. Aplique com: systemctl restart display-manager"
     exit 0
 fi
 
 [ "$MUDOU" -eq 0 ] && exit 0
 logger -t egpu-video "rollback neste boot; o proximo volta a decidir sozinho"
-systemctl reset-failed lightdm.service || true
-systemctl restart lightdm.service || true
+# display-manager.service e o alias para o DM realmente em uso (lightdm,
+# gdm3, sddm...). Nomear um deles sobe um segundo DM em paralelo.
+systemctl reset-failed display-manager.service || true
+systemctl restart display-manager.service || true

@@ -55,12 +55,25 @@ if [ -f /etc/modules-load.d/egpu-nvidia-display.conf ]; then
     say "removed stale /etc/modules-load.d/egpu-nvidia-display.conf"
 fi
 
+echo "== udev (escolha de dispositivo DRM para Wayland) =="
+install -m 644 "$F/udev/61-egpu-mutter-primary.rules" /etc/udev/rules.d/
+udevadm control --reload-rules >/dev/null 2>&1 || true
+say "/etc/udev/rules.d/61-egpu-mutter-primary.rules"
+
 echo "== systemd =="
 install -m 644 "$F"/systemd/egpu-*.service "$F"/systemd/egpu-*.timer /etc/systemd/system/
 install -m 644 "$F/systemd/regen-ssh-host-keys.service" /etc/systemd/system/
-install -d /etc/systemd/system/lightdm.service.d
-install -m 644 "$F/systemd/lightdm.service.d/egpu-rollback.conf" \
-        /etc/systemd/system/lightdm.service.d/
+# O drop-in de OnFailure precisa existir para o DM realmente em uso. Um
+# drop-in em display-manager.service.d nao e aplicado de forma confiavel,
+# porque display-manager.service e um symlink.
+for dm in lightdm gdm3 gdm sddm; do
+    if [ -f "/lib/systemd/system/$dm.service" ] || [ -f "/usr/lib/systemd/system/$dm.service" ]; then
+        install -d "/etc/systemd/system/$dm.service.d"
+        install -m 644 "$F/systemd/lightdm.service.d/egpu-rollback.conf" \
+                "/etc/systemd/system/$dm.service.d/egpu-rollback.conf"
+        say "OnFailure instalado para $dm"
+    fi
+done
 systemctl daemon-reload
 for u in egpu-pcie-recover.service egpu-video-apply.service \
          egpu-video-watchdog.timer egpu-health.service \

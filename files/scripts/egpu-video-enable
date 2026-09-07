@@ -6,7 +6,7 @@ set -eu
 sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=yes/' /etc/default/egpu-video
 /usr/local/sbin/egpu-video-apply
 if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
-    echo "Forcado para a NVIDIA. Aplique com: systemctl restart lightdm"
+    echo "Forcado para a NVIDIA. Aplique com: systemctl restart display-manager"
 else
     echo "Marcado, mas a GPU nao esta utilizavel neste boot."
     echo "Motivo: journalctl -t egpu-video-apply -b"

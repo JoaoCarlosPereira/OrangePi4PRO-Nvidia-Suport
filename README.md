@@ -27,7 +27,7 @@ OpenGL version string:  4.6.0 NVIDIA 580.142
 | Video output (X11) | ⚠️ | Works, but **the link drops under heavy GPU load** — see below |
 | Dual monitor | ⚠️ | 5120x1440 works, same stability caveat |
 | Survives reboot | ✅ | Verified end to end |
-| Wayland | ❓ | Untested |
+| Wayland (GNOME) | ⚠️ | Session runs on the eGPU, but **performance is poor** — cause not yet identified |
 | Vulkan | ❓ | Untested |
 
 ### ⚠️ Stability: the link drops under load
@@ -128,6 +128,62 @@ sudo lspci -vv -s 00:00.0 | grep CESta            # RxErr- means clean
 ```
 
 No software setting fixes signal integrity.
+
+### Wayland
+
+GNOME 50 is **Wayland-only** — upstream removed X11 in GNOME 49, and there is no
+`gnome-session-xsession` package. So on this board GNOME means Wayland.
+
+Wayland needs one extra thing that X11 does not: **telling the compositor which
+DRM device to use.** The board exposes three:
+
+```
+card0  sunxi-drm  SoC display engine
+card1  pvrsrvkm   PowerVR GPU -- RENDER ONLY, no KMS
+card2  nvidia     the eGPU
+```
+
+Left alone, mutter picks the PowerVR and dies:
+
+```
+KMS: DRM_IOCTL_MODE_CREATE_DUMB failed: Function not implemented
+Failed to lock front buffer on /dev/dri/card1
+```
+
+The session comes up black. `files/udev/61-egpu-mutter-primary.rules` fixes it
+with the tags mutter itself looks for — `mutter-device-ignore` on the PowerVR and
+the SoC engine, `mutter-device-preferred-primary` on the NVIDIA card. After that:
+
+```
+Created gbm renderer for '/dev/dri/card2'
+GPU /dev/dri/card2 selected primary given udev rule
+Added device '/dev/dri/card2' (nvidia-drm) using atomic mode setting.
+```
+
+Both heads light up, the compositor uses the real NVIDIA EGL stack
+(`libEGL_nvidia`, `libnvidia-eglcore`, `libnvidia-egl-gbm`), and the framebuffers
+live in VRAM.
+
+**But it is slow** — visible stutter, especially on cursor movement. That is an
+open problem. Ruled out so far, with evidence:
+
+- **Software rendering.** No — the process maps `libEGL_nvidia` and holds
+  `/dev/nvidia0`.
+- **Missing hardware cursor plane.** No — the device exposes 12 planes: 4 Overlay,
+  4 Primary, 4 Cursor, and a cursor plane is bound.
+- **Framebuffers in system memory crossing the Gen1 x1 link.** No — VRAM use
+  (~82 MiB) matches two 5120x1440 buffers held locally.
+- **Two compositors fighting over seat0.** Was a contributor and is fixed, but
+  the stutter survives it.
+
+Still unexplained: the GPU never leaves `P8 / 210 MHz` with `utilization 0 %`
+while the session stutters, and mutter logs `Failed to initialize accelerated
+iGPU/dGPU framebuffer sharing: Not hardware accelerated`. Nobody is busy, so
+something is waiting — KMS atomic commit latency over a Gen1 x1 link is the
+current suspect, untested.
+
+X11 remains the smooth option. GDM offers both, so the choice is the user's:
+pick XFCE (X11) or Ubuntu (GNOME/Wayland) at the login screen.
 
 ### Performance ceiling
 
@@ -279,6 +335,7 @@ on this specific board, and about the surrounding plumbing that keeps it stable.
 | `modprobe/` | Module options |
 | `systemd/` | Boot-time services: PCIe recovery, conditional apply, watchdog |
 | `scripts/` | `egpu-*` helper commands, including `egpu-link-margin` |
+| `udev/` | DRM device selection for Wayland compositors |
 
 Every one of these is explained in the tutorial. Do not copy them blindly — the
 PCIe addresses come from the A733 manual and are board-specific.

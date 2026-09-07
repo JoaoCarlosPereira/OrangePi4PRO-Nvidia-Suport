@@ -1,31 +1,77 @@
 #!/bin/sh
 # Reverte a saida de video pela eGPU se o servidor X nao estiver respondendo.
+#
+# CUIDADO -- historico: a versao anterior sondava "xdpyinfo -display :0" e
+# chamava "systemctl restart lightdm". Numa maquina com GNOME/GDM isso e
+# destrutivo em dobro: a sonda falha SEMPRE (a sessao e Wayland, nao existe X
+# em :0), e o restart sobe o lightdm em paralelo ao gdm. Dois compositores
+# disputando o mesmo seat0 travam a sessao e o logind passa a recusar login
+# com "session already running".
+#
+# Regras derivadas disso:
+#   1. so agir se a NOSSA config X11 estiver instalada
+#   2. nao concluir nada a partir do X quando a sessao e Wayland
+#   3. nunca nomear um display manager -- usar display-manager.service
 set -eu
 
-# So age se a configuracao da eGPU estiver ativa.
-if [ ! -f /etc/X11/xorg.conf ] || ! grep -q egpu-layout /etc/X11/xorg.conf; then
+LIVE=/etc/X11/xorg.conf
+
+# 1. Nossa config X11 esta ativa? Se nao, nada disso e da nossa conta.
+if [ ! -f "$LIVE" ] || ! grep -q egpu-layout "$LIVE"; then
     exit 0
 fi
 
+# 2. Qual o tipo da sessao grafica no seat0?
+tipo_sessao_seat0() {
+    for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+        [ "$(loginctl show-session "$s" -p Seat --value 2>/dev/null)" = "seat0" ] || continue
+        T=$(loginctl show-session "$s" -p Type --value 2>/dev/null)
+        case "$T" in wayland|x11) echo "$T"; return 0 ;; esac
+    done
+    echo none
+}
+
+TIPO=$(tipo_sessao_seat0)
+
+case "$TIPO" in
+    wayland)
+        # A config X11 e irrelevante aqui e a sonda nao diz nada.
+        logger -t egpu-video-watchdog "sessao Wayland ativa no seat0; nada a verificar"
+        exit 0
+        ;;
+    none)
+        # Nenhuma sessao grafica. Pode ser falha real -- ou o boot ainda esta
+        # em curso. Damos mais tempo antes de mexer.
+        sleep 30
+        [ "$(tipo_sessao_seat0)" = "none" ] || exit 0
+        logger -t egpu-video-watchdog "nenhuma sessao grafica no seat0 -- revertendo"
+        /usr/local/sbin/egpu-video-disable --rollback
+        exit 0
+        ;;
+esac
+
+# 3. Sessao X11: agora a sonda faz sentido.
 if ! pgrep -x Xorg >/dev/null 2>&1; then
-    logger -t egpu-video-watchdog "Xorg nem esta rodando"
+    logger -t egpu-video-watchdog "sessao x11 sem processo Xorg -- revertendo"
     /usr/local/sbin/egpu-video-disable --rollback
     exit 0
 fi
 
-# O X responde a uma consulta simples?
-for tentativa in 1 2 3; do
-    if XAUTHORITY=/var/run/lightdm/root/:0 timeout 10 xdpyinfo -display :0 >/dev/null 2>&1; then
-        logger -t egpu-video-watchdog "X respondendo normalmente na eGPU"
-        exit 0
-    fi
+for _ in 1 2 3; do
+    for AUTH in /var/run/lightdm/root/:0 /run/lightdm/root/:0 /home/orangepi/.Xauthority; do
+        [ -e "$AUTH" ] || continue
+        if XAUTHORITY="$AUTH" timeout 10 xdpyinfo -display :0 >/dev/null 2>&1; then
+            logger -t egpu-video-watchdog "X respondendo na eGPU"
+            exit 0
+        fi
+    done
     sleep 10
 done
 
 logger -t egpu-video-watchdog "X travado ou sem resposta -- revertendo para o HDMI do Orange Pi"
 
-# O Xorg travado ignora SIGTERM; mata direto antes de reverter.
-systemctl stop lightdm.service >/dev/null 2>&1 || true
+# O Xorg travado ignora SIGTERM; matar direto antes de reverter.
+systemctl stop display-manager.service >/dev/null 2>&1 || true
 sleep 3
 pkill -9 -x Xorg >/dev/null 2>&1 || true
 sleep 2

@@ -1,0 +1,25 @@
+# Escolha do dispositivo DRM para compositores Wayland (mutter/GNOME).
+#
+# O Orange Pi 4 Pro expoe TRES dispositivos DRM:
+#   card0  sunxi-drm  display engine do SoC
+#   card1  pvrsrvkm   GPU PowerVR -- SO RENDER, sem KMS
+#   card2  nvidia     a eGPU
+#
+# Sem estas regras o mutter escolhe a PowerVR e falha, porque ela nao
+# implementa dumb buffers:
+#   KMS: DRM_IOCTL_MODE_CREATE_DUMB failed: Function not implemented
+#   Failed to lock front buffer on /dev/dri/card1
+# A sessao Wayland sobe em tela preta.
+
+# 1) Nunca considerar a PowerVR para display -- ela nao tem saida nenhuma.
+ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", DRIVERS=="pvrsrvkm", TAG+="mutter-device-ignore"
+
+# 2) Preferir a NVIDIA como dispositivo primario.
+ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", DRIVERS=="nvidia", TAG+="mutter-device-preferred-primary"
+
+# 3) Ignorar o display engine do SoC.
+# Em multi-GPU o mutter mantem um renderer por dispositivo e copia o
+# framebuffer para os secundarios. Com a eGPU na tela, card0 nao tem monitor
+# e esse trabalho e puro desperdicio.
+# COMENTE esta linha se quiser usar o HDMI do Orange Pi sob Wayland.
+ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", DRIVERS=="sunxi-drm", TAG+="mutter-device-ignore"
