@@ -25,13 +25,15 @@ without a screen.
 
 Nothing else matters until `lspci` shows the card. Out of the box it will not.
 
-## 1.1 Force the link to Gen1
+## 1.1 Cap the link at Gen2
 
-The A733 controller does not reliably train above Gen1 with a discrete GPU
-attached. Left alone it attempts a speed change, times out, and often ends up
-with no endpoint at all.
+The vendor device tree asks for Gen3. The A733 trains Gen3 x1 to the GPU without
+a single link error, but the NVIDIA GSP firmware halts during driver init at that
+speed (`Xid 62`). Gen2 works end to end and doubles Gen1's bandwidth, so cap the
+link there. The details, and what "Speed change timeout" in the log really means,
+are in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.md).
 
-`egpu-pcie-gen1.dts`:
+`egpu-pcie-gen2.dts`:
 
 ```dts
 /dts-v1/;
@@ -41,11 +43,15 @@ with no endpoint at all.
     fragment@0 {
         target-path = "/soc@3000000/pcie@6000000";
         __overlay__ {
-            max-link-speed = <1>;
+            max-link-speed = <2>;
         };
     };
 };
 ```
+
+> If you had the older `egpu-pcie-gen1` overlay installed, replace it: never load
+> both. And power-cycle the GPU's PSU after changing the speed — the GPU
+> remembers the host's previous maximum until it gets a real reset.
 
 ## 1.2 Add the high-memory aperture
 
@@ -102,17 +108,17 @@ preserving the vendor's existing config, I/O and non-prefetchable windows.
 ```bash
 sudo apt install device-tree-compiler
 
-dtc -@ -I dts -O dtb -o egpu-pcie-gen1.dtbo    egpu-pcie-gen1.dts
+dtc -@ -I dts -O dtb -o egpu-pcie-gen2.dtbo    egpu-pcie-gen2.dts
 dtc -@ -I dts -O dtb -o egpu-pcie-highmem.dtbo egpu-pcie-highmem.dts
 
 sudo mkdir -p /boot/overlay-user
-sudo cp egpu-pcie-gen1.dtbo egpu-pcie-highmem.dtbo /boot/overlay-user/
+sudo cp egpu-pcie-gen2.dtbo egpu-pcie-highmem.dtbo /boot/overlay-user/
 ```
 
 Back up `/boot/orangepiEnv.txt` before editing it, then add:
 
 ```
-user_overlays=egpu-pcie-gen1 egpu-pcie-highmem
+user_overlays=egpu-pcie-gen2 egpu-pcie-highmem
 ```
 
 Reboot. **Power the GPU's PSU on before the board boots.**

@@ -1,0 +1,99 @@
+#!/bin/sh
+# Retrain the A733 <-> GPU PCIe link at a different speed, at runtime.
+#
+#   egpu-pcie-retrain <1|2|3> [--stress N]
+#
+# Widens the root port's advertised speed in the DesignWare DBI space (same
+# dbi_ro_wr_en trick the vendor driver uses), sets the target speed on both
+# partners, pulses DIRECT_SPEED_CHANGE exactly like the driver does, waits long
+# enough for Gen3 equalization, and reports the *measured* result.
+# With --stress N it then reads the GPU's BAR0 N times and stops at the first
+# physical-layer error in the root port's AER counter (a cold egpu-link-margin
+# that needs no NVIDIA driver).
+#
+# REFUSES to run while the NVIDIA modules are loaded: a failed retrain drops
+# the GPU off the bus and the driver takes the machine with it. Unload first:
+#   systemctl stop display-manager; rmmod nvidia_drm nvidia_modeset nvidia_uvm nvidia
+# A reboot always returns the link to what the device tree says.
+set -eu
+
+GEN=${1:-}
+STRESS=0
+[ "${2:-}" = "--stress" ] && STRESS=${3:-2000}
+case "$GEN" in 1|2|3) ;; *) echo "usage: $0 <1|2|3> [--stress N]"; exit 1;; esac
+[ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
+[ -e /sys/bus/pci/devices/0000:01:00.0 ] || { echo "GPU not enumerated"; exit 1; }
+if lsmod | grep -q '^nvidia'; then
+    echo "NVIDIA modules are loaded -- refusing. See header of this script."; exit 1
+fi
+
+export GEN STRESS
+python3 - <<'PY'
+import mmap, os, struct, time, subprocess
+GEN = int(os.environ["GEN"]); STRESS = int(os.environ["STRESS"])
+DBI, APP = 0x06000000, 0x06400000
+fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
+def m(base): return mmap.mmap(fd, 0x1000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=base)
+dbi, app = m(DBI), m(APP)
+def rd(mm, off): return struct.unpack_from("<I", mm, off)[0]
+def wr(mm, off, v): struct.pack_into("<I", mm, off, v)
+SPEED = {1: "2.5 GT/s", 2: "5.0 GT/s", 3: "8.0 GT/s", 4: "16 GT/s"}
+def status(tag):
+    lnksta = rd(dbi, 0x80) >> 16; sta2 = rd(dbi, 0xa0) >> 16; ltssm = rd(dbi, 0x728) & 0x3f
+    ce = subprocess.run(["setpci", "-s", "00:00.0", "0x110.L"], capture_output=True, text=True).stdout.strip()
+    print(f"[{tag}] LnkSta speed={SPEED.get(lnksta & 0xf, lnksta & 0xf)} width=x{(lnksta >> 4) & 0x3f} "
+          f"| LnkSta2 EqComplete={(sta2 >> 1) & 1} Ph1={(sta2 >> 2) & 1} Ph2={(sta2 >> 3) & 1} Ph3={(sta2 >> 4) & 1} "
+          f"LinkEqReq={(sta2 >> 5) & 1} | LTSSM=0x{ltssm:02x} | AER CESta={ce}")
+    return lnksta & 0xf
+
+print(f"target: Gen{GEN}")
+subprocess.run(["setpci", "-s", "00:00.0", "0x110.L=0xffffffff"])   # clear sticky AER bits
+status("before")
+
+# 1. root port: advertise the new maximum (LnkCap SLS + LnkCap2 vector), DBI RO-write enabled
+wr(dbi, 0x8bc, rd(dbi, 0x8bc) | 1)
+wr(dbi, 0x7c, (rd(dbi, 0x7c) & ~0xf) | GEN)
+wr(dbi, 0x9c, (rd(dbi, 0x9c) & ~0xfe) | (((1 << GEN) - 1) << 1))
+wr(dbi, 0x8bc, rd(dbi, 0x8bc) & ~1)
+# 2. target link speed on both partners
+wr(dbi, 0xa0, (rd(dbi, 0xa0) & ~0xf) | GEN)
+subprocess.run(["setpci", "-s", "01:00.0", f"CAP_EXP+0x30.W={GEN:x}:f"])
+print(f"root LnkCap=0x{rd(dbi,0x7c):08x} LnkCap2=0x{rd(dbi,0x9c):08x} LnkCtl2=0x{rd(dbi,0xa0) & 0xffff:04x}")
+# 3. DIRECT_SPEED_CHANGE pulse, then wait up to 1 s (the driver waits 2-20 ms)
+wr(dbi, 0x80c, rd(dbi, 0x80c) & ~(1 << 17))
+wr(dbi, 0x80c, rd(dbi, 0x80c) | (1 << 17))
+t0 = time.time()
+while time.time() - t0 < 1.0 and rd(dbi, 0x80c) & (1 << 17):
+    time.sleep(0.001)
+print(f"speed-change bit cleared after {1000*(time.time()-t0):.1f} ms" if not rd(dbi, 0x80c) & (1 << 17)
+      else "speed-change bit did NOT clear within 1 s")
+time.sleep(0.2)
+got = status("after")
+if got != GEN:
+    print("speed differs from target; trying LnkCtl Retrain Link as well")
+    wr(dbi, 0x80, rd(dbi, 0x80) | (1 << 5)); time.sleep(0.5); got = status("after-retrain")
+
+alive = subprocess.run(["setpci", "-s", "01:00.0", "0x00.L"], capture_output=True, text=True).stdout.strip()
+print("GPU config space:", "alive (%s)" % alive if alive not in ("", "ffffffff") else "NOT RESPONDING -- link lost")
+if got == GEN and STRESS and alive not in ("", "ffffffff"):
+    print(f"stress: reading GPU BAR0 {STRESS} times...")
+    # With no driver bound the kernel leaves memory decoding off and every
+    # BAR read completes as 0xffffffff without touching the GPU. Enable it.
+    subprocess.run(["setpci", "-s", "01:00.0", "COMMAND=0x02:0x02"])
+    bar = os.open("/sys/bus/pci/devices/0000:01:00.0/resource0", os.O_RDWR | os.O_SYNC)
+    bm = mmap.mmap(bar, 0x1000, mmap.MAP_SHARED, mmap.PROT_READ, offset=0)
+    boot0 = rd(bm, 0); errs = None   # NV_PMC_BOOT_0: architecture/implementation id
+    if boot0 in (0, 0xffffffff):
+        print(f"  BAR0 offset 0 reads 0x{boot0:08x}: GPU MMIO not reachable, stress skipped"); STRESS = 0
+    for i in range(1, STRESS + 1):
+        v = rd(bm, 0)
+        if v != boot0:
+            print(f"  BAR0 read mismatch at {i}: 0x{v:08x} vs 0x{boot0:08x}"); break
+        if i % 200 == 0:
+            ce = subprocess.run(["setpci", "-s", "00:00.0", "0x110.L"], capture_output=True, text=True).stdout.strip()
+            if ce != "00000000":
+                errs = (i, ce); break
+    if errs: print(f"  FIRST physical-layer error after ~{errs[0]} reads: CESta={errs[1]}")
+    else: print(f"  OK: {STRESS} BAR0 reads (boot0=0x{boot0:08x}), AER clean")
+status("final")
+PY

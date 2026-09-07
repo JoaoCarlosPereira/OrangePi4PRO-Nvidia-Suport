@@ -1,20 +1,32 @@
-# PCIe link speed: is Gen1 x1 the hardware ceiling?
+# PCIe link speed: Gen1 x1 was not the ceiling
 
-**Short answer: no.** The lane count is hardware (the A733 has exactly one PCIe
-lane), but the *speed* is not. The Gen1 overlay in this repo is the only thing
-holding the link at 2.5 GT/s. The same SoC, the same controller, the same PHY and
-the same M.2 slot have been measured at **Gen3 x1, 8.0 GT/s, 7.876 Gb/s** with an
-NVMe SSD. The theoretical gain for the GPU is therefore **4x** (about 2.0 Gb/s
-today against about 7.9 Gb/s), never 16x: x4 or x16 are impossible on this board.
+**Result (2026-09-07): the shipped image now runs the link at Gen2 x1 — 5.0 GT/s,
+about 400 MB/s each way, twice what Gen1 gave — validated end to end with the
+NVIDIA driver, CUDA and 300 error-free link probes. Gen3 x1 trains perfectly
+(8.0 GT/s, equalization complete, zero physical-layer errors, 20 000 clean MMIO
+reads) but the GPU's GSP firmware halts during driver init at that speed
+(`Xid 62`), three times out of three, so Gen3 is not usable yet.**
 
-This document records the evidence, explains why the first Gen3 attempts probably
-failed, and lays out a plan that tests Gen2 and Gen3 **without rebuilding the
-kernel** before anything is made permanent.
+The lane count is hardware: the Allwinner A733 has exactly one PCIe lane, so x1
+is final and x4/x16 are impossible. The speed was software all along. Two things
+kept Gen1 in place, and both were software:
 
-Everything below was established offline from the v1.1 image (kernel source,
-device trees, the A733 user manual, the U-Boot blob in the boot area), from the
-vendor driver source, and from the community NVMe work linked in §2.3. Nothing
-here has been run on the board yet. §4 is the plan to do exactly that.
+1. The vendor driver's log lines about speed are not measurements (§3.1), so the
+   early observation "it tries a speed change, times out, and ends up at Gen1" was
+   never evidence of anything.
+2. The NVIDIA firmware **copies the root port's advertised maximum into the
+   GPU's own `LnkCap`** a couple of seconds after every reset (§3.2). Once the
+   root port has said "2.5 GT/s" once, the GPU says it too. That made every
+   partial experiment done with the Gen1 overlay look like "the GPU won't go
+   faster".
+
+Measured on the board, same riser, same cable, same PSU:
+
+| Boot configuration | Link | `egpu-pcie-bandwidth` host→GPU / GPU→host | CUDA | Driver init |
+|---|---|---|---|---|
+| `egpu-pcie-gen1` (v1.1 image) | 2.5 GT/s x1 | 199 / 199 MB/s | PASS | clean |
+| **`egpu-pcie-gen2` (now)** | 5.0 GT/s x1 | **398 / 398 MB/s** (410 / 418 with the NSI limit at 700) | **PASS** | **clean** |
+| stock DT, no overlay | 8.0 GT/s x1 | — | `CUDA_ERROR_UNKNOWN` | `Xid 62`, `NV_ERR_RESET_REQUIRED` |
 
 ---
 
@@ -22,16 +34,10 @@ here has been run on the board yet. §4 is the plan to do exactly that.
 
 ### 1.1 The A733 manual (v0.92, §18.2–18.3)
 
-- The SoC has **one** PCIe controller, "PCIe3.0 DM", DesignWare-based.
-- "Supports Gen1 (2.5Gbps), Gen2 (5Gbps), Gen3 (8Gbps) speed".
-- "Link Width: **1 lane**".
-- The PHY is `COMB1_PHY_SERDES`, a combo PHY shared with USB3.1, "Supports up to
-  1 Lane", "PCIe Gen 1, 2 and 3, up to 8Gbps".
-- The controller exposes the standard DesignWare Gen3 equalization machinery
-  (register `SII_GEN3_EQ` at user offset 0x1350 reports
-  `smlh_ltssm_state_rcvry_eq`, the LTSSM equalization sub-state).
-
-So: **x1 is fixed by silicon. Gen3 is supported by silicon.**
+- One PCIe controller, "PCIe3.0 DM", DesignWare-based.
+- "Supports Gen1 (2.5Gbps), Gen2 (5Gbps), Gen3 (8Gbps) speed". "Link Width: **1 lane**".
+- PHY `COMB1_PHY_SERDES`, shared with USB3.1: "Supports up to 1 Lane", "PCIe Gen 1,
+  2 and 3, up to 8Gbps".
 
 ### 1.2 The vendor device tree ships Gen3
 
@@ -41,287 +47,258 @@ So: **x1 is fixed by silicon. Gen3 is supported by silicon.**
 compatible = "allwinner,sunxi-pcie-v300-rc";
 num-lanes = <1>;
 max-link-speed = <3>;
-phys = <&combo1_pcie>;
 ```
 
-Allwinner's own default is Gen3. Our overlay `egpu-pcie-gen1.dtbo` does exactly
-one thing: it overwrites `max-link-speed` with `1`. That is the whole difference
-between the link we run and the link the vendor intends.
+`egpu-pcie-gen1.dtbo` overwrote exactly one property. `egpu-pcie-gen2.dtbo` now
+does the same with `<2>`.
 
-### 1.3 The U-Boot in the image also trains at Gen3
+### 1.3 U-Boot trains the link before Linux, at Gen3
 
-The U-Boot control DTB embedded in the boot area of the image (offset
-`0x111d7b8`, 42974 bytes) has the same node with `max-link-speed = <3>`,
-`num-lanes = <1>`, `status = "okay"`, and the boot command runs
-`pci enum; nvme scan`. So **before Linux starts, U-Boot already attempts a Gen3
-link training with whatever is in the slot**, then times out or succeeds, and
-then Linux resets the endpoint and trains again at whatever the kernel DT says.
-Two trainings per boot. Keep that in mind when reading intermittent-enumeration
-symptoms (see §3.5).
+The U-Boot control DTB embedded in the image (boot area offset `0x111d7b8`) has
+the same node with `max-link-speed = <3>`, `status = "okay"`, and the boot command
+runs `pci enum; nvme scan`. **Every boot has two link trainings**: U-Boot at
+Gen3, then Linux. Every kernel log shows it:
 
-The U-Boot node also carries a known bug: `pcie3v3_supply = "dc1sw2"`, while the
-M.2 slot's 3.3 V is actually `dc1sw1` (see §2.3). Linux is unaffected because its
-DT wires `pcie3v3-supply` to the parent rail `dcdc1`, which is always on.
+```
+[    1.905] sunxi:pcie-rc-6000000.pcie:[INFO]: pcie is already link up
+```
+
+On every boot observed the first Linux probe inherited U-Boot's link. When the
+GPU had been power-cycled it was enumerated right there; after a warm reset it
+was not, and `egpu-pcie-recover`'s rebind (a fresh `PERST#`) brought it in. The
+U-Boot node also names the wrong 3.3 V rail (`pcie3v3_supply = "dc1sw2"`, the
+slot is on `dc1sw1` — see §2.3); Linux is unaffected because its DT wires the
+supply to the always-on parent rail `dcdc1`.
 
 ---
 
-## 2. Proof that this slot does Gen3
+## 2. Proof that this slot does Gen3, and where the GPU stops
 
-### 2.1 What we measured ourselves
+### 2.1 Live measurements, 2026-09-07
 
-With the Gen1 overlay, the kernel prints the *measured* link status:
-
-```
-pci 0000:01:00.0: 2.000 Gb/s available PCIe bandwidth, limited by 2.5 GT/s PCIe x1 link
-```
-
-That line comes from `pcie_print_link_status()` reading `LnkSta`, so Gen1 is real
-under our overlay. Nothing in this repo ever measured the link with the overlay
-removed — the README says so honestly.
-
-### 2.2 What the driver logs are *not*
-
-The two log lines everyone has been reading are not measurements:
+Runtime retrain from a Gen1 boot, NVIDIA modules unloaded, one `PERST#` via
+controller rebind so the GPU forgets the Gen1 host (§3.2), then
+`egpu-pcie-retrain`:
 
 ```
-sunxi:pcie-rc-6000000.pcie:[ERR]: Speed change timeout
-sunxi:pcie-rc-6000000.pcie:[INFO]: PCIe speed of Gen1
+[before] LnkSta 2.5 GT/s x1 | EqComplete=0 | LTSSM=0x11 (L0) | AER CESta=00000000
+target Gen2 → [after] 5.0 GT/s x1 | AER clean | OK: 5000 BAR0 reads
+target Gen3 → speed-change bit cleared after 0.3 ms
+             [after] 8.0 GT/s x1 | EqComplete=1 Ph1=1 Ph2=1 Ph3=1 LinkEqReq=0 | AER CESta=00000000
+             OK: 20000 BAR0 reads (boot0=0xb77000a1), AER clean
 ```
 
-Look at `bsp/drivers/pcie/pcie-sunxi-rc.c`:
+Cold boot with the stock DT (no Gen1 overlay), NVIDIA blocked for that boot:
 
-- `sunxi_pcie_host_read_speed()` reads `LINK_CONTROL2_LINK_STATUS2` (DBI 0xa0)
-  and masks `& 0xf`. Bits 3:0 of that register are **LnkCtl2 Target Link Speed**
-  — the value the driver itself just wrote — not the current speed. "PCIe speed
-  of GenN" always echoes the request.
-- `sunxi_pcie_host_speed_change()` waits for the `DIRECT_SPEED_CHANGE` bit
-  (DBI 0x80c bit 17) to self-clear for `LINK_WAIT_MAX_RETRIE` = **20** iterations
-  of `usleep_range(100, 1000)`, i.e. **2–20 ms**. On timeout it prints
-  "PCIe speed of Gen1" **unconditionally**, without reading anything.
-- With the Gen1 overlay the link is already at Gen1 when the driver requests a
-  "speed change" to Gen1. There is nothing to change, so the bit may never
-  self-clear and the timeout fires on every boot. That is why
-  `Speed change timeout` appears on successful boots too: **it is an artifact of
-  forcing Gen1, not a fault.**
+```
+[    1.905] sunxi:pcie-rc-6000000.pcie:[INFO]: PCIe speed of Gen3
+[    1.922] pci 0000:01:00.0: 7.876 Gb/s available PCIe bandwidth, limited by 8.0 GT/s PCIe x1 link
+GPU LnkCap=00454d04 (16 GT/s)   RC LnkCap=00737c13
+```
 
-A Gen3 speed change from Gen1 goes through `Recovery.Equalization` phases 0–3.
-The PCIe spec allows each phase up to 24–32 ms. A 2–20 ms wait can time out on a
-perfectly healthy Gen3 negotiation, print "Gen1", and the link may still end up
-at Gen3 a few milliseconds later — or not. **The original observation "it
-attempts a speed change, times out, and often ends up with no endpoint" was
-made through this misleading log**, so it does not tell us what speed the link
-actually reached or why enumeration failed.
+Gen3 equalization completes in well under a millisecond, and the channel —
+riser, cable and all — carries 8 GT/s with no `RxErr`, `BadTLP` or `BadDLLP`
+under MMIO traffic and under `egpu-link-margin` with the driver loaded. The
+"marginal link" hypothesis in the README was formed at Gen1 and does not
+transfer to Gen3 as-is.
+
+### 2.2 The Gen3 wall: `Xid 62` at driver init
+
+Loading `nvidia` on an 8 GT/s link, three times (runtime retrain, cold stock-DT
+boot, and after a fresh `PERST#`), always ended the same way within two seconds:
+
+```
+NVRM: Xid (PCI:0000:01:00): 62, 5236acff c008c040 00000000 202a5b42 2025ef7c ...
+NVRM: rpcRmApiAlloc_GSP: GspRmAlloc failed ... status=0x00000062
+NVRM: Assertion failed: Reset required [NV_ERR_RESET_REQUIRED]
+```
+
+`Xid 62` is "internal micro-controller halt": the GSP, which the open kernel
+modules boot on the GPU before anything else works, stops. `nvidia-smi` then
+cannot talk to the driver and `cuInit`/`cuCtxCreate` fail. **AER on both link
+partners stayed completely clean through the failure** — the counters were
+cleared immediately before `modprobe` and read back zero afterwards — so this is
+not corrupted TLPs on the wire. After a `PERST#` the same GPU boots the GSP
+cleanly at Gen1 or Gen2. The speed is the only variable.
+
+What is different about Gen3 for the GSP boot, in order of likelihood:
+
+1. **DMA timing on a non-coherent Arm.** The GSP firmware and its RPC queues
+   move host↔GPU by DMA through the `nvidia-arm-noncoherent-pr972.patch` cache
+   maintenance path. A 4x faster link exposes any ordering or flush race that
+   Gen1/Gen2 hide. This is the hypothesis to chase first, because it is software.
+2. A GPU-side PCIe power/EQ state that the RM programs at Gen3 (it does its own
+   speed management: idle at Gen1, ramping under load) interacting with a root
+   port that never sees a `RATE_SHADOW`/EQ redo — see §5.3 for the controller's
+   Gen3 registers.
+3. Payload-level signal integrity that AER cannot see (bit errors inside a TLP
+   with a valid LCRC are impossible; errors are either caught or absent — so
+   this one is *unlikely*, and it is listed only for completeness).
 
 ### 2.3 The NVMe community result on the same slot
 
 [Haidegger22/orangepi4pro-nvme-boot-no-sd](https://github.com/Haidegger22/orangepi4pro-nvme-boot-no-sd),
 building on [TblP/orangepi-uboot-fix](https://github.com/TblP/orangepi-uboot-fix),
-boots an Orange Pi 4 Pro from a WD SN750 in the M.2 slot, on the same
-6.6.98-sun60iw2 kernel, with the **stock** DTB (Gen3). Their measured result:
-
-```
-sunxi:pcie-rc-6000000.pcie:[INFO]: PCIe speed of Gen3
-pci 0000:01:00.0: 7.876 Gb/s available PCIe bandwidth, limited by 8.0 GT/s PCIe x1 link
-cat /sys/bus/pci/devices/0000:01:00.0/current_link_speed   # 8.0 GT/s PCIe
-```
-
-Sustained reads of about 610–640 MB/s and writes of about 560 MB/s. They also note
-the inverse of our situation: *"if the kernel DTB carries max-link-speed = <1>,
-Linux renegotiates the link down to Gen1 (2.0 Gb/s)"*.
-
-Two more things from their U-Boot patch that we reuse:
-
-- The LTSSM state is readable at DBI `0x06000728` (`PCIE_PL_DEBUG0`, bits 5:0).
-  `0x00` is Detect.Quiet (no receiver seen), `0x11` is L0.
-- Link-up status is at `0x06400e0c` (`SMLH_LINK_UP | RDLH_LINK_UP` = `0x3`).
-
-**Conclusion:** SoC, controller, PHY, slot and kernel all do Gen3 x1 today. What
-differs in our setup is what hangs off the slot — a riser and cable to an x16
-card — and the endpoint's Gen3 equalization behaviour.
+boots from a WD SN750 in the M.2 slot with the stock DTB: `PCIe speed of Gen3`,
+`7.876 Gb/s available`, 610–640 MB/s sustained reads. An NVMe controller has no
+GSP to boot, which is consistent with §2.2. Two register addresses from TblP's
+U-Boot patch are used by `egpu-pcie-linkinfo`: LTSSM state at DBI `0x06000728`
+(`PCIE_PL_DEBUG0[5:0]`, `0x11` = L0) and link-up at `0x06400e0c`.
 
 ---
 
-## 3. Why Gen3 may fail with the GPU, and what is software
+## 3. The two software mechanisms that hid all this
 
-Ordered from "certainly software" to "certainly physical".
+### 3.1 The driver reports the request, not the result
 
-### 3.1 The driver gives up too early and lies about the result (software)
+`bsp/drivers/pcie/pcie-sunxi-rc.c`:
 
-Described in §2.2. Fix: wait long enough for equalization (hundreds of ms), and
-on timeout **read `LnkSta`** instead of assuming Gen1. Patch:
-`files/patches/sunxi-pcie-report-real-link-speed.patch`. Note that
-`CONFIG_AW_PCIE_RC=y` is built-in, so this needs a kernel rebuild — see §4.4 for
-why that is the *last* step, not the first.
+- `sunxi_pcie_host_read_speed()` reads `LINK_CONTROL2_LINK_STATUS2` (DBI 0xa0)
+  `& 0xf` — **LnkCtl2 Target Link Speed**, what the driver just wrote.
+  "PCIe speed of GenN" always echoes the request.
+- `sunxi_pcie_host_wait_for_speed_change()` gives `DIRECT_SPEED_CHANGE`
+  (DBI 0x80c bit 17) 20 × `usleep_range(100, 1000)` = **2–20 ms**, and on timeout
+  prints "PCIe speed of Gen1" **unconditionally**.
+- With the Gen1 overlay the link was already at Gen1 when Gen1 was requested; the
+  bit had nothing to do and never self-cleared, so `Speed change timeout` fired on
+  **every** boot. With the stock DT the same code path logs
+  `PCIe speed of Gen3` with no timeout — the bit clears in 0.3 ms.
 
-### 3.2 No Gen3 equalization tuning at all (software)
+`files/patches/sunxi-pcie-report-real-link-speed.patch` fixes both (wait up to
+~500 ms, always log `LnkSta.CurrentLinkSpeed`). It needs a kernel rebuild
+(`CONFIG_AW_PCIE_RC=y`), so it is a quality-of-life fix, not a prerequisite.
 
-The vendor driver never touches `GEN3_RELATED_OFF` (DBI 0x890) or
-`GEN3_EQ_CONTROL_OFF` (DBI 0x8a8). Upstream DesignWare users that train dGPUs
-reliably (e.g. `pcie-tegra194.c`) set the preset request vector and feedback mode
-explicitly. If the runtime experiment in §4.2 shows Gen3 reaching
-`Recovery.Equalization` and falling back, these registers are the knobs:
+### 3.2 The GPU mirrors the root port's `LnkCap`
 
-| Register | Field | Meaning |
-|---|---|---|
-| 0x8a8 | bits 3:0 `FB_MODE` | 0 = direction change, 1 = figure of merit |
-| 0x8a8 | bits 23:8 `PSET_REQ_VEC` | which Tx presets to request from the GPU |
-| 0x890 | bit 16 `GEN3_EQ_DISABLE` | skip EQ phases 2/3 entirely (diagnostic only) |
-| 0x890 | bits 25:24 `RATE_SHADOW_SEL` | selects which rate 0x8a8 applies to |
+Polling the GPU's PCIe capability after a `PERST#`, no driver loaded, root port
+advertising 2.5 GT/s:
 
-All of them are writable from user space through `/dev/mem`
-(`CONFIG_STRICT_DEVMEM` is off on this kernel), so they can be tried without a
-rebuild.
+```
+ +1s  GPU LnkCap=00453d04 LnkCtl2=0004   <- hardware default, 16 GT/s
+ +3s  GPU LnkCap=00453d01 LnkCtl2=0000   <- clamped to the host's 2.5 GT/s
+ +6s  GPU LnkCap=00453d01 LnkCtl2=0000
+```
 
-### 3.3 Gen2 needs no equalization (software test with high odds)
+The GPU's boot firmware reads the upstream port's maximum and lowers its own
+advertised maximum to match; the kernel driver does the same at init
+(`pcie.link.gen.hostmax` in `nvidia-smi` is that value). Consequences:
 
-5 GT/s is negotiated exactly like 2.5 GT/s, with no equalization phase. If the
-channel is good enough for Gen2, the link should come up at Gen2 with the current
-driver by simply requesting it. Gen2 x1 already **doubles** today's bandwidth
-(about 4 Gb/s). That is why §4 tests Gen2 first.
+- A DesignWare root port only starts a speed change if the partner advertised
+  a higher rate in the last training. With the GPU clamped to Gen1,
+  `DIRECT_SPEED_CHANGE` self-clears in 0 ms and nothing happens.
+- The clamp **survives `rmmod`, survives a warm reboot, and is re-applied ~2 s
+  after every `PERST#`** from whatever the root port advertises at that moment.
+- So the root port must advertise the target speed *before* the GPU comes out
+  of reset. That is what the device tree does, and why a cold power-up after
+  changing the overlay is the clean test.
 
-### 3.4 The channel is already marginal at Gen1 (physical)
-
-The README's `egpu-link-margin` work is real evidence: `RxErr+` accumulating
-under traffic at 2.5 GT/s means corrupted symbols on the wire at the *easiest*
-rate. Gen3 at 8 GT/s is roughly four times more demanding of the same trace.
-Every centimetre of riser cable, every connector, and any refclk degradation
-counts. This is the part no software can fix, and it is also the part the NVMe
-users do not have: their SSD sits directly in the slot.
-
-Expect the outcome to be one of: Gen3 clean, Gen3 with `RxErr` and freezes
-(unusable), Gen2 clean, or Gen1 only. **Gen2 clean is a very plausible landing
-point** with a typical M.2-to-x16 riser; Gen3 may need a better riser.
-
-### 3.5 Two link trainings per boot (software, U-Boot)
-
-U-Boot enumerates PCIe at Gen3 before Linux (§1.3). A GPU that saw a PERST#, a
-Gen3 attempt and an abort, and then another PERST# from Linux, may well be the
-"half-initialised, refuses to train, only a power cycle helps" state the README
-describes. Two cheap experiments: (a) watch the serial console during boot for
-U-Boot's `Link up timeout` / `pcie link up success` / `PCIe speed of GenN`, and
-(b) remove `pci enum;nvme scan` from the U-Boot boot command, or rebuild U-Boot
-with TblP's rail fix, and see whether enumeration becomes deterministic.
+This also reframes the README's "warm reset wedges the GPU": part of what a warm
+reset leaves behind is a GPU that has memorised a Gen1 host.
 
 ---
 
-## 4. Plan
+## 4. How the board was frozen twice, so nobody repeats it
 
-Rules: one variable per boot, run `egpu-link-margin` after every change, X on the
-Allwinner HDMI during the experiments (`egpu-video-disable --auto`), and never
-retrain while the NVIDIA modules are loaded — a failed retrain drops the GPU off
-the bus and `nvidia` will take the box with it.
+### 4.1 Rebinding the controller with the NVIDIA driver bound
 
-### 4.1 Phase 0 — measure what we actually have (one boot, no changes)
+Between `rmmod nvidia` and the rebind, a `watch -n 1 nvidia-smi` left in a
+terminal reloaded the modules — `nvidia-smi` calls `nvidia-modprobe`, so **any
+nvidia-smi anywhere reloads the driver within a second of it being removed**.
+The rebind then removed a PCI device with `nvidia` bound to it and the board
+locked up; the hardware watchdog rebooted it a minute later.
 
-```bash
-sudo egpu-pcie-linkinfo
-```
-
-Records, for root port and GPU: `LnkCap` (advertised max), `LnkSta` (current),
-`LnkCtl2` (target), `LnkSta2` (equalization phase bits), AER `CESta`, the DWC
-Gen3 registers and the LTSSM state. Save the output. This is the baseline every
-later run is compared against.
-
-### 4.2 Phase 1 — runtime retrain, no rebuild, no reboot
-
-Boot as today (Gen1, stable enumeration), keep X on the Pi's HDMI, then:
+Guard used afterwards, recommended for any link experiment:
 
 ```bash
-sudo egpu-pcie-retrain 2      # request 5 GT/s and retrain
-sudo egpu-link-margin 200     # is it electrically clean?
+sudo systemctl stop display-manager
+printf 'install nvidia /bin/false\ninstall nvidia_drm /bin/false\ninstall nvidia_modeset /bin/false\ninstall nvidia_uvm /bin/false\n' \
+  | sudo tee /etc/modprobe.d/zz-egpu-experiment.conf
+sudo fuser -k /dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm
+sudo rmmod nvidia_drm nvidia_modeset nvidia_uvm nvidia
+lsmod | grep -c '^nvidia'          # must print 0
+sudo rm /etc/modprobe.d/zz-egpu-experiment.conf   # when done
 ```
 
-`egpu-pcie-retrain` widens the root port's advertised speed in the DBI (the same
-`dbi_ro_wr_en` trick the vendor driver uses), sets the target speed, pulses
-`DIRECT_SPEED_CHANGE` exactly like the driver, waits properly, and prints the
-*measured* result plus the equalization bits. If the link comes back at Gen2
-with zero `RxErr` after 200 probes, Gen2 is ours.
+`egpu-pcie-retrain` refuses to run while any `nvidia*` module is loaded.
 
-Then, same boot or next boot:
+### 4.2 Two `PERST#` cycles a few seconds apart
 
-```bash
-sudo egpu-pcie-retrain 3
-sudo egpu-link-margin 200
-```
+With nothing bound, one unbind/bind cycle worked five times in a row across the
+session. A second cycle issued ~12 s after the first hung the board hard and the
+watchdog did **not** bring it back — most likely U-Boot's `pci enum` (§1.3)
+stalling on a GPU left mid-devinit. Recovery needed mains power off on the GPU
+PSU and the board, GPU PSU on first.
 
-Three outcomes and what each means:
-
-| `current_link_speed` | `LnkSta2` | Meaning | Next |
-|---|---|---|---|
-| 8.0 GT/s, `RxErr-` | `EqComplete+` phases 1–3 `+` | Gen3 works. Riser is fine. | §4.3 with Gen3 |
-| 8.0 GT/s but `RxErr+` quickly | EQ complete | Trains but channel too weak | better riser, or settle for Gen2 |
-| falls back to 2.5/5 GT/s | any phase `-`, or `LinkEqReq+` | Equalization failed | §3.2 knobs, then riser |
-| link down / GPU lost | — | Endpoint could not follow | power-cycle GPU; try §3.2 `GEN3_EQ_DISABLE` once as a diagnostic |
-
-### 4.3 Phase 2 — make the winner persistent (overlay only)
-
-- **Gen2:** install `files/overlays/egpu-pcie-gen2.dts` in place of the Gen1 one
-  and set `user_overlays=egpu-pcie-gen2 egpu-pcie-highmem`.
-- **Gen3:** simply drop the Gen1 overlay: `user_overlays=egpu-pcie-highmem`.
-  The vendor default is already Gen3.
-
-Reboot several times. Enumeration must stay at least as reliable as with Gen1
-(`egpu-pcie-recover` logs to the journal how many attempts it needed). If
-enumeration gets worse, that is the two-trainings problem of §3.5, not the
-speed itself — test it by disabling U-Boot's `pci enum` before concluding.
-
-Do not forget the `egpu-pcie-recover` unbind/bind path: with Gen2/Gen3 in the DT
-each rebind will now attempt the faster speed too, and the `Speed change
-timeout` log should **disappear** on healthy boots (the bit self-clears when a
-real change happens).
-
-### 4.4 Phase 3 — driver patch (kernel rebuild; optional)
-
-`files/patches/sunxi-pcie-report-real-link-speed.patch` makes the driver wait up
-to ~500 ms for the speed change and log the *measured* `LnkSta` speed. It is a
-quality-of-life fix, not a prerequisite: the overlay alone changes the negotiated
-speed. It is last because `CONFIG_AW_PCIE_RC=y` means rebuilding the kernel
-image, and this repo pins the kernel because the NVIDIA modules are built for
-exactly `6.6.98-sun60iw2`. Rebuilding the same version string keeps the modules
-loadable (no `CONFIG_MODVERSIONS`), but back up `/boot` and the modules first —
-`egpu-health --repair` restores the modules, nothing restores a kernel.
-
-### 4.5 If Gen3 needs equalization tuning
-
-Order of attempts, each followed by `egpu-pcie-retrain 3` + `egpu-link-margin`:
-
-1. `PSET_REQ_VEC = 0x3ff`, `FB_MODE = 0` (Tegra's Gen3 recipe): request every
-   preset, direction-change feedback.
-2. `FB_MODE = 1` (figure of merit).
-3. `GEN3_EQ_DISABLE` — **diagnostic only**: if the link trains at 8 GT/s with EQ
-   skipped and stays clean, the failure was the EQ handshake, not the channel.
-
-`egpu-pcie-linkinfo` prints the current values so every attempt is recorded.
-
-### 4.6 Secondary software ceiling to check once the link is faster
-
-The vendor driver caps the PCIe master port in the NSI bandwidth limiter to 200,
-400 or 700 (MB/s) for Gen1/2/3 via `nsi_port_set_abs_bwl()` — only on the success
-path, and 700 is below the ~985 MB/s a Gen3 x1 link carries. The limiter is
-exposed under `/sys/class/hwmon/*/port_abs_bwl*`. Check it after Gen3 works and
-raise or disable it if throughput plateaus around 700 MB/s.
+Rule: **one `PERST#` per experiment, then leave the GPU alone for at least
+five seconds.** If a second reset is needed, cut the GPU's power instead.
 
 ---
 
-## 5. What to expect when it works
+## 5. Remaining work
 
-| Link | Raw | Payload (~) | NVMe reference on this slot |
-|---|---|---|---|
-| Gen1 x1 (today) | 2.5 GT/s | 250 MB/s | — |
-| Gen2 x1 | 5.0 GT/s | 500 MB/s | — |
-| Gen3 x1 | 8.0 GT/s | 985 MB/s | 610–640 MB/s read measured |
+### 5.1 Gen2 is the default, validated warm and cold
 
-For a desktop GPU this is still a narrow pipe — a 3050 in a PC has 16 GB/s — but
-scanout is unaffected (framebuffer lives in VRAM), texture uploads and CUDA
-host-device copies get 2–4x faster, and, more importantly for this board, PCIe
-latency-bound operations (register reads, small DMA) improve because each TLP
-spends less time on the wire.
+`/boot/orangepiEnv.txt` carries `user_overlays=egpu-pcie-gen2 egpu-pcie-highmem`
+and `/boot/overlay-user/egpu-pcie-gen2.dtbo`. Validated on a warm reboot and on
+a cold power-up (GPU PSU off and on): kernel `4.000 Gb/s available PCIe
+bandwidth, limited by 5.0 GT/s PCIe x1 link`, GPU enumerated on the first probe,
+desktop on the GPU, no `Xid`, CUDA passes, 398 MB/s each way, 300 probes clean.
+On the cold start U-Boot trains Gen3 first and Linux downshifts to Gen2 in
+`setup_rc`; the root port's sticky `RxErr+` seen right after boot comes from that
+transition and does not recur once cleared. The previous configuration is in
+`/boot/orangepiEnv.txt.before-gen3-test` (Gen1) if it ever needs to come back.
+
+Idle behaviour is normal and not a regression: the NVIDIA driver parks the link
+at 2.5 GT/s in P8 and ramps it under load, so `current_link_speed` reads
+2.5 GT/s on an idle desktop. Measure with `egpu-pcie-bandwidth`, not with a
+static read.
+
+### 5.2 The NSI bandwidth limiter costs a few percent
+
+The vendor driver sets the PCIe master's NSI bandwidth limit from the *requested*
+gen: 200, 400 or 700 (MB/s). `egpu-pcie-bandwidth` returns 398 MB/s on a Gen2
+boot (limit 400) and 410–418 MB/s on the same Gen2 link when the limit was left
+at 700 by a Gen3 boot. Gen1's 199 MB/s was likewise pinned at its 200 limit. The
+driver patch is the place to lift it (set 700 for every gen, or skip the call);
+until the kernel is rebuilt this is the ceiling and it is close enough.
+
+### 5.3 Getting to Gen3: what to try, in order
+
+1. **Instrument the GSP boot.** `NVreg_RmMsg=`/`NVreg_ResmanDebugLevel` in
+   `/etc/modprobe.d`, then load at Gen3 and capture the last RPC before `Xid 62`.
+   If the halt is in firmware transfer or queue setup, hypothesis 1 of §2.2
+   (non-coherent DMA race) is confirmed and the fix is in
+   `nvidia-arm-noncoherent-pr972.patch`, not in the PCIe stack.
+2. **Load at Gen2, then retrain to Gen3 with the driver running.** The RM
+   handles speed changes itself (it already drops to Gen1 at idle). If the GSP is
+   fine once booted and only the *boot* at Gen3 fails, `egpu-pcie-retrain 3`
+   after a successful Gen2 init isolates that — but it must be done with a way to
+   power-cycle the GPU at hand, and the script's `nvidia*` guard has to be
+   bypassed deliberately for that one test.
+3. **Controller-side Gen3 knobs**, all writable through `/dev/mem`, as read on
+   the live board:
+
+   ```
+   0x890 GEN3_RELATED_OFF = 0x00002001  (RXEQ_RGRDLESS_RXTS=1, ZRXDC_NONCOMPL=1, EQ enabled)
+   0x8a8 GEN3_EQ_CONTROL  = 0x04059f60  (FB_MODE=0 direction change, PSET_REQ_VEC=0x059f)
+   ```
+
+   Equalization completed with these defaults, so they are not the cause of the
+   `Xid`, but `PSET_REQ_VEC=0x3ff` / `FB_MODE=1` are the standard things to
+   vary if a Gen3 boot ever fails EQ.
+4. **U-Boot**: rebuild without `pci enum` (or with TblP's rail fix and a
+   `reset-gpios`) so the GPU sees one clean training per boot. This is the fix
+   for the "first probe does not enumerate after a warm reset" symptom, and it
+   removes one variable from any Gen3 work.
+
+---
 
 ## 6. Files added for this investigation
 
 | File | Purpose |
 |---|---|
-| `files/scripts/egpu-pcie-linkinfo` | Read-only snapshot of both link partners, EQ bits, DWC Gen3 registers, LTSSM |
-| `files/scripts/egpu-pcie-retrain` | Runtime speed change to Gen2/Gen3, refuses to run with NVIDIA loaded |
-| `files/overlays/egpu-pcie-gen2.dts` | Persistent Gen2 if that is where the riser tops out |
-| `files/patches/sunxi-pcie-report-real-link-speed.patch` | Driver: longer speed-change wait, log measured speed |
+| `files/overlays/egpu-pcie-gen2.dts` | The new default: `max-link-speed = <2>` |
+| `files/scripts/egpu-pcie-linkinfo` | Read-only snapshot: both partners' LnkCap/LnkSta/LnkSta2, AER, DWC Gen3 registers, LTSSM |
+| `files/scripts/egpu-pcie-retrain` | Runtime speed change to Gen1/2/3 with MMIO stress; refuses to run with NVIDIA loaded |
+| `files/scripts/egpu-pcie-bandwidth` | CUDA driver-API host↔GPU copy bandwidth, pinned memory, integrity check |
+| `files/patches/sunxi-pcie-report-real-link-speed.patch` | Driver: ~500 ms speed-change wait, log the measured speed |

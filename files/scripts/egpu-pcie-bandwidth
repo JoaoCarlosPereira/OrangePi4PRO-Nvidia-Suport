@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+# Measure host<->GPU copy bandwidth over the PCIe link with the CUDA driver API.
+# Pinned host memory, 64 MiB transfers, best of 5. Compare runs at Gen1/Gen2/Gen3.
+import ctypes as c, time, sys
+cuda = c.CDLL("libcuda.so.1")
+def ck(r, what):
+    if r != 0:
+        s = c.c_char_p(); cuda.cuGetErrorName(r, c.byref(s)); raise SystemExit(f"{what}: CUDA error {r} {s.value!r}")
+SZ = int(sys.argv[1]) * 1024 * 1024 if len(sys.argv) > 1 else 64 * 1024 * 1024
+ck(cuda.cuInit(0), "cuInit")
+dev = c.c_int(); ck(cuda.cuDeviceGet(c.byref(dev), 0), "cuDeviceGet")
+ctx = c.c_void_p(); ck(cuda.cuCtxCreate_v2(c.byref(ctx), 0, dev), "cuCtxCreate")
+dptr = c.c_uint64(); ck(cuda.cuMemAlloc_v2(c.byref(dptr), c.c_size_t(SZ)), "cuMemAlloc")
+hptr = c.c_void_p(); ck(cuda.cuMemHostAlloc(c.byref(hptr), c.c_size_t(SZ), 0), "cuMemHostAlloc")
+c.memset(hptr, 0xA5, SZ)
+def bench(fn, label):
+    best = 0.0
+    for _ in range(5):
+        ck(cuda.cuCtxSynchronize(), "sync"); t = time.perf_counter()
+        ck(fn(), label); ck(cuda.cuCtxSynchronize(), "sync")
+        best = max(best, SZ / (time.perf_counter() - t))
+    print(f"{label:<14} {best/1e6:8.1f} MB/s  ({SZ>>20} MiB, best of 5)")
+bench(lambda: cuda.cuMemcpyHtoD_v2(dptr, hptr, c.c_size_t(SZ)), "host -> GPU")
+bench(lambda: cuda.cuMemcpyDtoH_v2(hptr, dptr, c.c_size_t(SZ)), "GPU -> host")
+# integrity: read back and compare the pattern
+buf = (c.c_ubyte * SZ).from_address(hptr.value)
+ck(cuda.cuMemsetD8_v2(dptr, 0x3C, c.c_size_t(SZ)), "memset"); ck(cuda.cuMemcpyDtoH_v2(hptr, dptr, c.c_size_t(SZ)), "DtoH")
+bad = sum(1 for i in range(0, SZ, 4096) if buf[i] != 0x3C)
+print("integrity:", "OK" if bad == 0 else f"{bad} bad pages")

@@ -21,7 +21,7 @@ OpenGL version string:  4.6.0 NVIDIA 580.142
 
 | Capability | State | Notes |
 |---|---|---|
-| PCIe enumeration | ✅ | Gen1 x1 — requires a device tree overlay |
+| PCIe enumeration | ✅ | Gen2 x1 (5.0 GT/s) via overlay; Gen3 trains but the GPU firmware halts — see [PCIe link speed](docs/PCIE-LINK-SPEED.md) |
 | CUDA / compute | ✅ | Validated: context, VRAM transfers, sm_86 kernel |
 | `nvidia-smi` | ✅ | Reports the GPU and all 6144 MiB |
 | Video output (X11) | ✅ | The stable path. Plasma X11 verified: P0, hardware GL, no flip-event bug |
@@ -357,10 +357,18 @@ is capable of:
 (capable of 252.048 Gb/s with 16.0 GT/s PCIe x16 link)
 ```
 
-This is the A733's PCIe controller, not a configuration mistake. Desktop use and
-video playback are fine. Anything that streams large buffers across the bus every
-frame will be bottlenecked. Scanout itself is not affected — the display engine
-reads the framebuffer from VRAM locally.
+That was the v1.1 image. The **x1** is the A733's PCIe controller — it has
+exactly one lane. The **Gen1** was our own overlay. On 2026-09-07 the link was
+measured at every speed on the same riser: Gen3 x1 (8.0 GT/s) trains cleanly
+but the GPU's GSP firmware halts at driver init (`Xid 62`); **Gen2 x1
+(5.0 GT/s) works end to end** — CUDA passes, about 400 MB/s each way, twice the
+Gen1 figure — and is now the default overlay (`egpu-pcie-gen2`). The evidence,
+the two software mechanisms that hid it, and the path to Gen3 are in
+[docs/PCIE-LINK-SPEED.md](docs/PCIE-LINK-SPEED.md).
+
+Desktop use and video playback are fine at either speed. Anything that streams
+large buffers across the bus every frame is bottlenecked. Scanout itself is not
+affected — the display engine reads the framebuffer from VRAM locally.
 
 ---
 
@@ -542,11 +550,11 @@ on this specific board, and about the surrounding plumbing that keeps it stable.
 
 | Path | Purpose |
 |---|---|
-| `overlays/` | Device tree overlays for PCIe Gen1 and the high-memory aperture |
+| `overlays/` | Device tree overlays for PCIe Gen1 (and Gen2) and the high-memory aperture |
 | `xorg/` | Xorg layout that pins X to the NVIDIA card |
 | `modprobe/` | Module options |
 | `systemd/` | Boot-time services: PCIe recovery, conditional apply, watchdog |
-| `scripts/` | `egpu-*` helper commands, including `egpu-link-margin` |
+| `scripts/` | `egpu-*` helper commands, including `egpu-link-margin`, `egpu-pcie-linkinfo`, `egpu-pcie-retrain` |
 | `udev/` | DRM device selection for Wayland compositors, and DRM node access |
 | `systemd/ssh.service.d/` | Makes `sshd` a persistent daemon that never gives up |
 | `apt/` | Upgrade shielding: pin, and a post-dpkg hook that re-asserts both |
@@ -580,10 +588,10 @@ are completely different diagnoses. Do not conflate them.
 - **A warm reset of the SoC wedges the GPU.** It stays powered and half-initialised
   and then refuses to train the link, no matter how many controller rebinds you
   issue. Only cutting power to the card recovers it.
-- **The link is forced to Gen1 x1.** ~2 Gb/s, and every overlay in this repo
-  assumes it. Whether the board can train higher was never tested — the Gen1
-  overlay was in place from the first successful enumeration onward, so this is
-  an untested constraint, not a measured limit.
+- **The link runs at Gen2 x1** (~4 Gb/s; the v1.1 image shipped with Gen1).
+  Gen3 x1 trains cleanly but the NVIDIA GSP halts at driver init on it
+  (`Xid 62`). Why, and what to try next, is in
+  [docs/PCIE-LINK-SPEED.md](docs/PCIE-LINK-SPEED.md).
 - **Kernel and driver are version-pinned.** The modules are built for exactly
   6.6.98-sun60iw2 and 580.142. Upgrading either breaks the pair.
 
