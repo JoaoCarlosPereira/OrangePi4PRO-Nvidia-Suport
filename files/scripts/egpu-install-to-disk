@@ -58,6 +58,7 @@ echo "ALL DATA ON $TARGET WILL BE ERASED."
 if [ $YES -eq 0 ]; then read -rp "Type ERASE to continue: " a; [ "$a" = ERASE ] || { echo "aborted"; exit 1; }; fi
 
 # 1. wipe and partition: GPT, one ext4 partition, whole disk
+echo "STAGE: partitioning and formatting $TARGET"
 for p in $(lsblk -ln -o NAME "$TARGET" | tail -n +2); do umount -q "/dev/$p" 2>/dev/null || true; done
 wipefs -aq "$TARGET"; parted -s "$TARGET" mklabel gpt mkpart root ext4 1MiB 100%; udevadm settle
 PART=$(lsblk -ln -o NAME,TYPE "$TARGET" | awk '$2=="part"{print "/dev/"$1}' | head -1)
@@ -68,9 +69,11 @@ echo "partition   : $PART  UUID $NEWUUID"
 M=/mnt/egpu-target; mkdir -p $M; mount "$PART" $M
 trap 'echo "FAILED at line $LINENO -- see $LOG"; umount $M 2>/dev/null || true' ERR
 set +e
-rsync -aHAXx --numeric-ids --info=progress2 \
+echo "STAGE: copying the system to $PART (this takes a while)"
+rsync -aHAXx --numeric-ids --info=progress2 --no-inc-recursive \
       --exclude={/dev/*,/proc/*,/sys/*,/run/*,/tmp/*,/mnt/*,/media/*,/lost+found,/var/tmp/*,/swapfile} / $M/
 RC=$?; set -e
+echo "STAGE: finalizing (fstab, boot medium)"
 case $RC in 0|23|24) ;; *) echo "rsync failed with code $RC"; umount $M; exit 1;; esac
 mkdir -p $M/{dev,proc,sys,run,tmp,mnt,media/bootfs,boot}
 # /boot on the target is only a mount point; U-Boot reads the boot medium's copy

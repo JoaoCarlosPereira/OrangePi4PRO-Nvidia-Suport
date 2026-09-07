@@ -45,9 +45,21 @@ case "$RAW" in
     $TERM_CMD -e "sh -c \"$SUDO /usr/local/sbin/egpu-install-to-disk --revert && $SUDO systemctl reboot\"" 2>/dev/null & wait;;
   *"Install the system"*)
     zenity --question --title="Confirm" --text="ALL DATA ON $DEV WILL BE ERASED.\n\nThe system is copied there and the board reboots into it.\n$BOOT stays as boot medium and fallback." 2>/dev/null || exit 0
-    TERM_CMD=$(command -v xfce4-terminal || command -v x-terminal-emulator || command -v gnome-terminal)
-    $TERM_CMD -e "sh -c \"$SUDO /usr/local/sbin/egpu-install-to-disk --yes $DEV || { echo; echo install failed - see /var/log/egpu-install-to-disk.log - press Enter; read x; }\"" 2>/dev/null &
-    wait;;
+    LOG=/var/log/egpu-install-to-disk.log
+    # progress: rsync's --info=progress2 percentages (accurate thanks to --no-inc-recursive)
+    # drive a zenity bar; STAGE lines become the bar's text
+    sh -c "$SUDO /usr/local/sbin/egpu-install-to-disk --yes --no-reboot $DEV" 2>&1 | tr '\r' '\n' \
+      | awk '/^STAGE: /{sub(/^STAGE: /,""); print "# " $0; fflush(); next}
+             /^partition   :|^done\./{print "# " $0; fflush(); next}
+             match($0,/[0-9]+%/){print substr($0,RSTART,RLENGTH-1); fflush()}' \
+      | zenity --progress --title="Installing the system to $DEV" --text="Preparing $DEV..." \
+               --percentage=0 --no-cancel --width=560 2>/dev/null
+    if as_root grep -q "^done\." $LOG 2>/dev/null; then
+        zenity --info --title="Installed" --width=460 --text="The system was copied to $DEV.\n$BOOT keeps /boot and stays as fallback (egpu-install-to-disk --revert).\n\nThe board will reboot now." 2>/dev/null
+        as_root systemctl reboot
+    else
+        zenity --error --title="Install failed" --width=560 --text="See $LOG\n\n$(as_root tail -n 6 $LOG 2>/dev/null | tr '\r' '\n' | tail -n 6)" 2>/dev/null
+    fi;;
 esac
 as_root sh -c "mkdir -p /var/lib/egpu; touch $FLAG" 2>/dev/null
 exit 0
