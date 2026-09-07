@@ -13,18 +13,22 @@ LIST=$(/usr/local/sbin/egpu-install-to-disk --list 2>/dev/null)
 BOOT=$(echo "$LIST" | sed -n 's/^boot medium: \(\/dev\/[a-z0-9]*\).*/\1/p')
 mapfile -t CANDS < <(echo "$LIST" | awk -F'|' '/^  \/dev/ {gsub(/^ +/,"",$1); print}')
 [ ${#CANDS[@]} -gt 0 ] || { pkexec sh -c "mkdir -p /var/lib/egpu; touch $FLAG" 2>/dev/null; exit 0; }
-ROWS=(keep "Keep running from $BOOT" "")
-for c in "${CANDS[@]}"; do IFS='|' read -r dev size tran model <<<"$c"; ROWS+=("$dev" "Install the system to $dev (ERASES IT)" "$size $tran $model"); done
-ROWS+=(later "Ask again on the next boot" "")
-CHOICE=$(zenity --list --timeout=180 --title="Orange Pi 4 Pro eGPU image — first boot" --width=720 --height=330 \
+ROWS=("Keep running from $BOOT" "")
+for c in "${CANDS[@]}"; do IFS='|' read -r dev size tran model <<<"$c"; ROWS+=("Install the system to $dev  (ERASES IT)" "$size $tran $model"); done
+ROWS+=("Ask again on the next boot" "")
+RAW=$(zenity --list --timeout=180 --title="Orange Pi 4 Pro eGPU image — first boot" --width=720 --height=330 \
   --text="The ROM boots only from microSD or USB 2.0. Linux can run the system from a faster disk (USB-C SSD, NVMe) while $BOOT keeps /boot." \
-  --column=id --column=Choice --column=Disk --hide-column=1 --print-column=1 "${ROWS[@]}" 2>/dev/null); [ -n "$CHOICE" ] || CHOICE=keep
-case "$CHOICE" in
-  later) exit 0;;
-  /dev/*)
-    zenity --question --title="Confirm" --text="ALL DATA ON $CHOICE WILL BE ERASED.\n\nThe system is copied there and the board reboots into it.\n$BOOT stays as boot medium and fallback." 2>/dev/null || exit 0
+  --column=Choice --column=Disk "${ROWS[@]}" 2>/dev/null); RC=$?
+[ $RC -eq 0 ] && [ -z "$RAW" ] && RAW="Keep"        # OK with nothing highlighted = keep
+[ $RC -eq 5 ] && RAW="Keep"                          # timeout = keep
+[ $RC -ne 0 ] && [ $RC -ne 5 ] && exit 0             # Cancel/Esc = ask again next boot
+DEV=$(printf '%s' "$RAW" | grep -o '/dev/[a-z0-9]*' | head -1)
+case "$RAW" in
+  *"Ask again"*) exit 0;;
+  *"Install the system"*)
+    zenity --question --title="Confirm" --text="ALL DATA ON $DEV WILL BE ERASED.\n\nThe system is copied there and the board reboots into it.\n$BOOT stays as boot medium and fallback." 2>/dev/null || exit 0
     TERM_CMD=$(command -v xfce4-terminal || command -v x-terminal-emulator || command -v gnome-terminal)
-    $TERM_CMD -e "sh -c 'sudo /usr/local/sbin/egpu-install-to-disk --yes $CHOICE || { echo; echo install failed, press Enter; read x; }'" 2>/dev/null &
+    $TERM_CMD -e "sh -c 'sudo /usr/local/sbin/egpu-install-to-disk --yes $DEV || { echo; echo install failed, press Enter; read x; }'" 2>/dev/null &
     wait;;
 esac
 pkexec sh -c "mkdir -p /var/lib/egpu; touch $FLAG" 2>/dev/null || sudo -n sh -c "mkdir -p /var/lib/egpu; touch $FLAG" 2>/dev/null
