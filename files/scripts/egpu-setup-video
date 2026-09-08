@@ -1,0 +1,71 @@
+#!/bin/bash
+# GPU video decode for players and browsers on the eGPU (Orange Pi 4 Pro, NVIDIA 580.x, arm64).
+# Run once, as root, with network, after the driver stack is in place.
+#
+# What it sets up (all verified 2026-09-08 on an RTX 3050):
+#   libnvidia-decode/encode  NVDEC/NVENC/VDPAU libraries, at the SAME version as the pinned driver
+#                            (our apt pin blocks new nvidia packages, so it is lifted for this step only)
+#   ffmpeg / mpv             decode with -hwaccel cuda / --hwdec=nvdec (ffmpeg is built with nvdec)
+#   nvidia-vaapi-driver      VA-API -> NVDEC bridge (elFarto), built from source: Chrome and Firefox
+#                            only speak VA-API. Profiles: H.264, HEVC, VP9, AV1 (direct backend).
+#   environment              LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct MOZ_DISABLE_RDD_SANDBOX=1
+#   Google Chrome            launcher override with the VA-API feature flags
+#   Firefox                  Mozilla's official linux-aarch64 build in /opt/firefox (the snap cannot
+#                            see an external VA-API driver), with VA-API preferences via policies.json
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
+export DEBIAN_FRONTEND=noninteractive
+V=$(dpkg-query -W -f='${Version}' nvidia-utils-580 2>/dev/null || true); [ -n "$V" ] || { echo "nvidia-utils-580 not installed"; exit 1; }
+echo "== NVIDIA decode/encode libraries at $V"
+PIN=/etc/apt/preferences.d/99-egpu-freeze; [ -f $PIN ] && mv $PIN /root/99-egpu-freeze.tmp
+apt-get install -y -q "libnvidia-decode-580=$V" "libnvidia-encode-580=$V"; RC=$?
+[ -f /root/99-egpu-freeze.tmp ] && mv /root/99-egpu-freeze.tmp $PIN; apt-mark hold libnvidia-decode-580 libnvidia-encode-580 >/dev/null
+[ $RC -eq 0 ] || exit 1
+echo "== tools and build dependencies"
+apt-get install -y -q ffmpeg mpv vainfo vdpauinfo libva-drm2 libva-x11-2 libva-glx2 \
+    meson ninja-build pkg-config gcc git libva-dev libdrm-dev libegl-dev libgstreamer-plugins-bad1.0-dev
+echo "== nvidia-vaapi-driver"
+rm -rf /tmp/nvidia-vaapi-driver; git clone -q --depth 1 https://github.com/elFarto/nvidia-vaapi-driver.git /tmp/nvidia-vaapi-driver
+( cd /tmp/nvidia-vaapi-driver && meson setup build --buildtype=release -Dprefix=/usr -Dlibdir=/usr/lib/aarch64-linux-gnu >/dev/null && ninja -C build >/dev/null && ninja -C build install >/dev/null )
+ls -la /usr/lib/aarch64-linux-gnu/dri/nvidia_drv_video.so
+echo "== environment (sessions and login shells)"
+printf 'LIBVA_DRIVER_NAME=nvidia\nNVD_BACKEND=direct\nMOZ_DISABLE_RDD_SANDBOX=1\n' > /etc/environment.d/90-egpu-vaapi.conf
+grep -q '^LIBVA_DRIVER_NAME=' /etc/environment || printf 'LIBVA_DRIVER_NAME=nvidia\nNVD_BACKEND=direct\nMOZ_DISABLE_RDD_SANDBOX=1\n' >> /etc/environment
+echo "== Google Chrome launcher (if installed)"
+if [ -f /usr/share/applications/google-chrome.desktop ]; then
+  install -d /usr/local/share/applications
+  sed -E 's#^Exec=/usr/bin/google-chrome-stable( |$)#Exec=/usr/bin/google-chrome-stable --enable-features=VaapiVideoDecodeLinuxGL,VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs --ignore-gpu-blocklist #' \
+      /usr/share/applications/google-chrome.desktop > /usr/local/share/applications/google-chrome.desktop
+  echo "  /usr/local/share/applications/google-chrome.desktop"
+fi
+echo "== Firefox (Mozilla linux-aarch64 build)"
+if [ "${EGPU_SKIP_FIREFOX:-}" = "" ]; then
+  LANGCODE=${FIREFOX_LANG:-pt-BR}
+  curl -sL -o /tmp/firefox.tar.xz "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64-aarch64&lang=$LANGCODE"
+  rm -rf /opt/firefox && tar -C /opt -xJf /tmp/firefox.tar.xz && rm -f /tmp/firefox.tar.xz
+  ln -sfn /opt/firefox/firefox /usr/local/bin/firefox; install -d /opt/firefox/distribution
+  cat > /opt/firefox/distribution/policies.json <<'JSON'
+{ "policies": { "Preferences": {
+    "media.ffmpeg.vaapi.enabled": {"Value": true, "Status": "default"},
+    "media.hardware-video-decoding.force-enabled": {"Value": true, "Status": "default"},
+    "gfx.webrender.all": {"Value": true, "Status": "default"},
+    "widget.dmabuf.force-enabled": {"Value": true, "Status": "default"} } } }
+JSON
+  install -d /usr/local/share/applications
+  cat > /usr/local/share/applications/firefox.desktop <<'DESK'
+[Desktop Entry]
+Name=Firefox
+Comment=Web browser (official Mozilla build, VA-API on the eGPU)
+Exec=env MOZ_DISABLE_RDD_SANDBOX=1 LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct /opt/firefox/firefox %u
+Icon=/opt/firefox/browser/chrome/icons/default/default128.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=firefox
+DESK
+  /opt/firefox/firefox --version
+fi
+echo "== check"
+LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct vainfo --display drm --device /dev/dri/renderD129 2>/dev/null | grep -E "Driver version|H264High|HEVCMain|VP9Profile0|AV1Profile0"
+echo "done. In Chrome open chrome://gpu (Video Decode: hardware); in Firefox about:support -> Media. Watch nvidia-smi dmon -s u (dec column) while a video plays."
