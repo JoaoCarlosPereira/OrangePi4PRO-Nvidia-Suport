@@ -1,0 +1,23 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Orange Pi 4 Pro: bring the USB-C port (usbc0, EHCI0/OHCI0 + XHCI/DWC3) up in HOST
+ * mode from the kernel itself.
+ *
+ * The vendor DT declares the port as OTG with VBUS/ID detection; it only becomes a
+ * host when a userspace script (orangepi-hardware-optimization) writes "usb_host" to
+ * /sys/devices/platform/soc@3000000/10.usbc0/otg_role, about 11 s into the boot.
+ * A root filesystem on a USB-C SSD can therefore never be found by the initramfs.
+ * With usb_port_type = 1 the port is a host as soon as the driver probes.
+ * Cost: the board cannot act as a USB gadget on that port.
+ */
+/ {
+    fragment@0 {
+        target-path = "/soc@3000000/usbc0@10";
+        __overlay__ {
+            usb_port_type = <1>;
+            usb_detect_type = <0>;
+        };
+    };
+};

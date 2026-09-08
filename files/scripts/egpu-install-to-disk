@@ -82,11 +82,24 @@ if [ "$BOOTFS_MNT" != / ]; then rsync -a "$BOOTFS_MNT/boot/" $M/boot.fallback/ 2
 # 3. fstab on the target: root there, boot medium at /media/bootfs, its /boot bind-mounted on /boot
 {
   echo "UUID=$NEWUUID / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1"
-  echo "UUID=$BOOTUUID /media/bootfs ext4 defaults,noatime 0 2"
+  echo "UUID=$BOOTUUID /media/bootfs ext4 defaults,noatime,x-gvfs-hide 0 2"
   echo "/media/bootfs/boot /boot none bind 0 0"
   grep -E '^tmpfs[[:space:]]+/tmp' /etc/fstab || echo "tmpfs /tmp tmpfs defaults,nosuid 0 0"
 } > $M/etc/fstab
 mkdir -p $M/var/lib/egpu; touch $M/var/lib/egpu/firstboot-done
+
+# 3b. the system disk and the boot medium are internal from now on: no "removable
+# drive" icon, no eject, no automount attempts (udisks2 honours UDISKS_SYSTEM)
+TSER=$(lsblk -dn -o SERIAL "$TARGET" | tr -d ' '); BSER=$(lsblk -dn -o SERIAL "/dev/$BOOTDISK" 2>/dev/null | tr -d ' ')
+RULE=/etc/udev/rules.d/70-egpu-system-disk.rules
+{
+  echo "# written by egpu-install-to-disk: system disk and boot medium are internal, not removable media"
+  echo "SUBSYSTEM==\"block\", ENV{ID_FS_UUID}==\"$NEWUUID\", ENV{UDISKS_SYSTEM}=\"1\", ENV{UDISKS_AUTO}=\"0\""
+  echo "SUBSYSTEM==\"block\", ENV{ID_FS_UUID}==\"$BOOTUUID\", ENV{UDISKS_SYSTEM}=\"1\", ENV{UDISKS_AUTO}=\"0\""
+  [ -n "$TSER" ] && echo "SUBSYSTEM==\"block\", KERNEL==\"$(basename "$TARGET")\", ENV{ID_SERIAL_SHORT}==\"$TSER\", ENV{UDISKS_SYSTEM}=\"1\""
+  echo "SUBSYSTEM==\"block\", KERNEL==\"$BOOTDISK\", ENV{UDISKS_SYSTEM}=\"1\""
+} > $M$RULE
+cp $M$RULE $RULE 2>/dev/null || true    # the boot medium's own system gets the same view
 sync; umount $M
 
 # 4. point the boot medium at the new root
