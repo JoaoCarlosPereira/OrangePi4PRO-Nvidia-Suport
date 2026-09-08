@@ -3,6 +3,18 @@
 Working notes carried between sessions of this project, consolidated on
 2026-09-07. Each one cost time to learn. Newer notes first.
 
+## Desktop environments (2026-09-08)
+
+- GNOME 50 is Wayland-only and its installer makes GDM the display manager with
+  Wayland on: black screen on the GPU (nvidia_drm flip-event bug) and a machine
+  too slow for SSH. Put lightdm back and disable Wayland in `/etc/gdm3/custom.conf`.
+  Stay on X11 desktops.
+- A root filesystem on a USB-C SSD needs the USB-C port in host mode from the
+  kernel (`egpu-usbc-host` overlay); the vendor DT relies on a userspace script
+  11 s into boot, which the initramfs never sees.
+- Pulling a running root disk without shutting down leaves no journal of the
+  broken boot; run `e2fsck` before touching it offline.
+
 ## PCIe link speed (2026-09-07)
 
 - **Hardware:** the A733 has one PCIe lane (x1 is final), Gen1–Gen3. The vendor

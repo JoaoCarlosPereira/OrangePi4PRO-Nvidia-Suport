@@ -537,3 +537,25 @@ for c in /sys/class/drm/card*-*; do
     printf '%-24s %s\n' "$(basename "$c")" "$(cat "$c/status")"
 done
 ```
+
+## Installing GNOME (or any Wayland-only desktop) leaves the GPU monitor black
+
+GNOME 50 ships **Wayland-only** sessions (`/usr/share/wayland-sessions/gnome.desktop`;
+there is no `gnome-xorg` any more). Installing `gnome-session gdm3` also makes GDM
+the display manager with `WaylandEnable=true` and autologin, so the next boot goes
+straight into Mutter on Wayland — the path where `nvidia_drm`'s flip-event bug
+freezes the session (see *The Wayland ceiling* above). Symptoms: the board boots,
+LEDs on, the monitor on the GPU stays black, and the machine can become so slow
+that SSH times out.
+
+Recovery, with the root filesystem on another machine (or from a working shell):
+
+```bash
+ln -sfn /usr/lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+echo /usr/sbin/lightdm > /etc/X11/default-display-manager
+sed -i 's/^WaylandEnable=true/WaylandEnable=false/' /etc/gdm3/custom.conf
+```
+
+GNOME can stay installed; it just cannot drive this GPU until the `nvidia_drm`
+bug is fixed upstream. X11 desktops — XFCE (shipped), Plasma X11, MATE, Cinnamon —
+are the ones that work.
