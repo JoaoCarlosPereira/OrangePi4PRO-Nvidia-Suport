@@ -32,4 +32,17 @@ wrong output once. Card of 16 GB or larger.
 
 ## Files
 
-Filled in at publication.
+```
+orangepi4pro-egpu.img.xz.part-0   2097152000 bytes
+orangepi4pro-egpu.img.xz.part-1   1448002828 bytes
+orangepi4pro-egpu.img.xz.sha256   2441d2e05ad28343170b3411f666fcd67ed467ac665e31b058cf4fc13f3e3161
+kernel-6.6.98-sun60iw2-egpu.tar.gz   the rebuilt kernel on its own (already inside the image)
+```
+
+```bash
+cat orangepi4pro-egpu.img.xz.part-* > orangepi4pro-egpu.img.xz
+sha256sum -c orangepi4pro-egpu.img.xz.sha256
+xz -dc orangepi4pro-egpu.img.xz | sudo dd of=/dev/sdX bs=4M status=progress
+```
+
+Uncompressed: 14677233664 bytes (13.6 GB root partition + 32 MiB boot area).
