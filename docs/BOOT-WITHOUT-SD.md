@@ -53,6 +53,10 @@ target USB or NVMe) once `egpu-install-uboot deb` has been run.
 ## Status
 
 - Rebuilt U-Boot boots from the SD boot area and from the SPI NOR: verified.
+- Root filesystem on a USB-C SSD (SanDisk SSD PLUS 240 GB) with `/boot` on the
+  microSD, installed from the first-boot dialog: **verified 2026-09-08** — copy at
+  37 MB/s in about 5 minutes, then root on `/dev/sda1`, 182 MB/s writes, PCIe Gen2
+  and the desktop on the RTX 3050 unchanged, both drives shown as internal.
 - Boot from USB with no microSD present: **verified 2026-09-08** — SanDisk
   Cruzer Glide 16 GB in a Type-A port, root on `/dev/sda1`, filesystem expanded
   on first boot, PCIe Gen2 and the desktop on the RTX 3050 as on microSD.

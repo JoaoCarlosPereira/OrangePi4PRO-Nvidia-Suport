@@ -29,6 +29,10 @@ rm -rf $MNT/var/lib/AccountsService/users/* $MNT/tmp/* $MNT/var/tmp/* $MNT/var/c
 find $MNT/var/log -type f -exec truncate -s 0 {} +
 rm -rf $MNT/var/log/journal/*/
 rm -f $MNT/etc/modprobe.d/zz-egpu-experiment.conf
+echo "== boot-medium state: root on itself, first-boot menu armed, no per-disk udev rule"
+CARDUUID=$(blkid -s UUID -o value "$LOOP"); sed -i "s/^rootdev=.*/rootdev=UUID=$CARDUUID/" $MNT/boot/orangepiEnv.txt
+grep rootdev $MNT/boot/orangepiEnv.txt; rm -f $MNT/etc/udev/rules.d/70-egpu-system-disk.rules $MNT/var/lib/egpu/firstboot-done
+rm -f $MNT/boot/orangepiEnv.txt.before-install-to-disk $MNT/boot/orangepiEnv.txt.before-gen3-test
 echo "== credentials"
 HASH=$(awk -F: '$1=="orangepi"{print $2}' $MNT/etc/shadow); LAST=$(awk -F: '$1=="orangepi"{print $3}' $MNT/etc/shadow)
 perl -e 'my($p,$h)=@ARGV; exit(crypt($p,$h) eq $h ? 0 : 1)' orangepi "$HASH" && echo "orangepi password = orangepi: matches" || { echo "PASSWORD HASH DOES NOT MATCH 'orangepi'"; exit 1; }

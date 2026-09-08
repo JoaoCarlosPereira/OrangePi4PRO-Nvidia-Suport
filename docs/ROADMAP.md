@@ -83,7 +83,11 @@ back out. Background for every item is in [PCIE-LINK-SPEED.md](PCIE-LINK-SPEED.m
 > and a full 16 MiB dump kept in `orangepi-backup/testcard-backup/spinor.bin`.
 > Booting from the SPI U-Boot with no microSD present is **verified** with a USB
 > stick in a Type-A port; it took a second U-Boot fix (Type-A VBUS enable on
-> PB7, active-low — stock U-Boot leaves the ports unpowered). Step 9 done. Caveat: the public U-Boot tree is from
+> PB7, active-low — stock U-Boot leaves the ports unpowered). Step 9 done.
+> Beyond it: `egpu-install-to-disk` and the first-boot dialog move the root
+> filesystem to a fast disk while the medium keeps `/boot`; verified with a
+> USB-C SSD (182 MB/s writes) after adding the `egpu-usbc-host` overlay — the
+> vendor DT only makes the USB-C port a host from userspace, 11 s into boot. Caveat: the public U-Boot tree is from
 > March 2026 while the vendor binary on the cards is from July; nothing broke
 > on SD boot, but the July fixes are unknown.
 
