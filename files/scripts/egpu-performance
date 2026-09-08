@@ -1,0 +1,68 @@
+#!/bin/sh
+# Modo de alto desempenho do Orange Pi 4 Pro com eGPU.
+#
+#   egpu-performance on      governor "performance" nos dois clusters (A55 1.8 GHz, A76 2.0 GHz),
+#                            persistence mode na NVIDIA; grava em /etc/default/cpufrequtils e
+#                            habilita egpu-performance.service para repetir a cada boot
+#   egpu-performance off     volta ao governor de fabrica (ondemand) e desabilita o servico
+#   egpu-performance apply   so aplica o que esta em /etc/default/cpufrequtils (usado pelo servico)
+#   egpu-performance status
+#
+# O SoC tem trip points termicos em 70/90/110 C e o kernel reduz a frequencia sozinho
+# (cooling devices cpufreq-cpu0/cpu6); "performance" so tira a rampa de subida, nao a protecao.
+set -eu
+
+CONF=/etc/default/cpufrequtils
+UNIT=egpu-performance.service
+
+governor_from_conf() {
+    g=$(sed -n 's/^GOVERNOR=//p' "$CONF" 2>/dev/null | tr -d '"' | head -1)
+    echo "${g:-ondemand}"
+}
+
+apply() {
+    gov=$(governor_from_conf)
+    for p in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -f "$p/scaling_governor" ] || continue
+        grep -qw "$gov" "$p/scaling_available_governors" || continue
+        echo "$gov" > "$p/scaling_governor"
+        # governor de fabrica: deixa min/max como o cpufrequtils da imagem (nao mexemos)
+        if [ "$gov" = performance ]; then
+            cat "$p/cpuinfo_max_freq" > "$p/scaling_max_freq"
+        fi
+    done
+    if [ "$gov" = performance ] && command -v nvidia-smi >/dev/null && [ -e /dev/nvidiactl ]; then
+        timeout 20 nvidia-smi -pm 1 >/dev/null 2>&1 || true
+    fi
+}
+
+set_conf() {
+    if grep -q '^GOVERNOR=' "$CONF" 2>/dev/null; then
+        sed -i "s/^GOVERNOR=.*/GOVERNOR=$1/" "$CONF"
+    else
+        printf 'ENABLE=true\nGOVERNOR=%s\n' "$1" >> "$CONF"
+    fi
+}
+
+status() {
+    echo "config: GOVERNOR=$(governor_from_conf)  servico: $(systemctl is-enabled $UNIT 2>/dev/null || echo ausente)"
+    for p in /sys/devices/system/cpu/cpufreq/policy*; do
+        printf '  %s cpus %-12s %-12s %5s MHz (max %s)\n' "$(basename "$p")" "$(cat "$p/affected_cpus" | tr ' ' ',')" \
+            "$(cat "$p/scaling_governor")" "$(( $(cat "$p/scaling_cur_freq") / 1000 ))" "$(( $(cat "$p/scaling_max_freq") / 1000 ))"
+    done
+    for z in /sys/class/thermal/thermal_zone*; do
+        case "$(cat "$z/type")" in cpub_thermal_zone|cpul_thermal_zone) printf '  %s %s C\n' "$(cat "$z/type")" "$(( $(cat "$z/temp") / 1000 ))";; esac
+    done
+    if command -v nvidia-smi >/dev/null && [ -e /dev/nvidiactl ]; then
+        timeout 10 nvidia-smi --query-gpu=persistence_mode,pcie.link.gen.current,clocks.gr,temperature.gpu --format=csv,noheader 2>/dev/null \
+            | sed 's/^/  nvidia: persistence,gen,clock,temp = /'
+    fi
+}
+
+case "${1:-status}" in
+    on)     set_conf performance; apply; systemctl enable "$UNIT" >/dev/null 2>&1 || true; status ;;
+    off)    set_conf ondemand;    apply; systemctl disable "$UNIT" >/dev/null 2>&1 || true; status ;;
+    apply)  apply ;;
+    status) status ;;
+    *) echo "uso: egpu-performance on|off|apply|status" >&2; exit 2 ;;
+esac

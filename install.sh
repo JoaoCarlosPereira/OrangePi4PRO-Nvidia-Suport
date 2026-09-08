@@ -12,6 +12,8 @@
 #   EGPU_UBOOT_SPI=1   also flash the fixed U-Boot into the SPI NOR (needed to boot
 #                      without a microSD; boot0 untouched, readback-verified)
 #   EGPU_SKIP_OVERLAYS=1 / EGPU_SKIP_UBOOT=1   leave those parts alone
+#   EGPU_PERFORMANCE=1 high-performance mode: "performance" CPU governor on both clusters and
+#                      NVIDIA persistence mode at every boot (egpu-performance on)
 #   EGPU_FIRSTBOOT=1   arm the first-boot menu (egpu-firstboot.service): on the next boot
 #                      tty1 offers to move the system to a connected disk (USB 3 SSD, NVMe)
 #                      while this medium keeps /boot. Used when building the image.
@@ -142,6 +144,9 @@ for u in egpu-pcie-recover.service egpu-video-apply.service \
          regen-ssh-host-keys.service; do
     systemctl enable "$u" >/dev/null 2>&1 && say "enabled $u"
 done
+if [ "${EGPU_PERFORMANCE:-}" = "1" ]; then
+    /usr/local/sbin/egpu-performance on | sed 's/^/  /'
+fi
 
 echo "== SSH a qualquer custo =="
 # O sshd e o unico canal de recuperacao deste board, porque o que quebra nele e

@@ -1,0 +1,13 @@
+[Unit]
+Description=Orange Pi 4 Pro eGPU: governor de CPU e persistence mode da NVIDIA (egpu-performance)
+# Depois do ajuste de fabrica da imagem e do driver NVIDIA ja carregado.
+After=orangepi-hardware-monitor.service orangepi-hardware-optimize.service egpu-video-apply.service
+ConditionPathExists=/etc/default/cpufrequtils
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/egpu-performance apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
