@@ -21,11 +21,16 @@ apt-get update -qq
 case "$DE" in
   plasma)
     echo "== Plasma (X11 + Wayland) =="
+    # Plasma 6.6 (Ubuntu 26.04). X11 session pieces first: without them the
+    # metapackage installs a Wayland-only desktop.
     apt-get install -y kde-plasma-desktop sddm \
         plasma-session-x11 kwin-x11 \
-        plasma-workspace-wallpapers kwin-addons \
-        kde-config-gtk-style breeze-gtk-theme \
-        plasma-nm plasma-pa powerdevil plasma-discover
+        plasma-workspace-wallpapers kwin-addons plasma-widgets-addons \
+        kde-config-gtk-style breeze-gtk-theme breeze-icon-theme \
+        plasma-nm plasma-pa powerdevil plasma-discover plasma-systemmonitor \
+        kde-spectacle dolphin konsole kate gwenview okular ark kcalc \
+        fonts-noto-core fonts-noto-color-emoji fonts-hack
+    # Wayland session stays available in the SDDM menu, X11 is the default
     echo "/usr/bin/sddm" > /etc/X11/default-display-manager
     systemctl enable sddm
     install -d /etc/sddm.conf.d
