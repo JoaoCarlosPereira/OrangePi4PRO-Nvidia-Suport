@@ -573,6 +573,32 @@ The flip-event warnings described in *The desktop wedges under use* were seen in
 long Wayland sessions on 580.142; watch `dmesg | grep -c __nv_drm_handle_flip_event`
 during the first days on GNOME.
 
+## Black screen after `reboot`, and again after "power-cycling" only the board
+
+Symptom: after a warm `reboot` the board comes up, SSH works, but there is no video.
+`nvidia-smi` says `Unable to determine the device handle for GPU0: Unknown Error`, the kernel
+repeats `NVRM: _intrServiceStallExactList: Stuck interrupt detected for mcEngine 50`, and
+Xorg sits inside the kernel in `drm_master_open` (see `/proc/<pid>/stack`). A second boot,
+this time after cutting power to the Orange Pi *only*, fails the same way but with a different
+face: `NVRM: Xid ... 56` three times right after the driver loads, then `nvidia-modeset/kthread_q`,
+`plymouthd` and Xorg all in state `D`. The splash never hands over.
+
+Cause: the GPU's display engine wedged during the warm reset and **the eGPU dock kept it
+powered**, so the board's own power cycle and the PERST at boot did not clear it. The
+second boot inherited the first boot's wedge (2026-09-08).
+
+Fix: power off the board *and the dock's power supply*, wait ten seconds, power the dock
+first and then the board. Prefer `poweroff` followed by a manual power-up over `reboot`.
+
+Two readings that look alarming during this and are not:
+
+- `LnkSta: Speed 2.5GT/s (downgraded)` while nothing runs on the GPU. The NVIDIA firmware
+  drops the link to Gen1 at idle; it returns to the configured Gen2 under load
+  (`egpu-pcie-bandwidth` shows ~410 MB/s and `LnkSta` reads 5GT/s straight after).
+- `CESta: RxErr+` on the root port right after boot. It is a sticky bit from link training.
+  Clear it (`setpci -s 00:00.0 0x100+0x10.L=0xffffffff` and `CAP_EXP+0x0a.W=0x000f`), load the
+  link, and read it again; a healthy link stays at `RxErr-` with `integrity: OK`.
+
 ## The desktop is on the GPU but browsers and GTK4 apps still lag
 
 Symptom: `glxinfo` says NVIDIA, `nvidia-smi` lists Xorg, KWin and plasmashell as GPU clients,

@@ -24,6 +24,15 @@ Working notes carried between sessions of this project, consolidated on
   `nvidia-smi dmon -s u` and DevTools `SystemInfo.getInfo` (via a temporary
   `--user-data-dir` plus `--remote-debugging-port`, mandatory since Chrome 136).
 
+- A warm `reboot` wedges the GPU and a power cycle of the board alone does not clear it
+  while the dock keeps the card powered: the next boot fails with `Xid 56` at driver load
+  and `nvidia-modeset`, plymouth and Xorg stuck in `D`. Cut the dock's power too.
+- `LnkSta ... (downgraded)` to Gen1 at idle is the NVIDIA firmware saving power, not a
+  degraded link; and the root port's `RxErr+` after boot is a sticky training-time bit.
+  Clear, load the link, re-read before blaming cables (I did blame the cables first).
+- The journal lives in RAM on this image (`orangepi-ramlog`): after a reboot the previous
+  boot's kernel log is gone. Capture `journalctl -b -k` before rebooting a failing board.
+
 ## Desktop environments (2026-09-08)
 
 - GNOME 50 (Wayland-only) works on the eGPU from a clean boot with the GBM,

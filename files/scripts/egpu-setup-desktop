@@ -35,6 +35,8 @@ case "$DE" in
     systemctl enable sddm
     install -d /etc/sddm.conf.d
     printf '[General]\nDisplayServer=x11\n' > /etc/sddm.conf.d/10-egpu-x11.conf
+    # The image logs the default user in automatically (as lightdm did); keep that with SDDM.
+    printf '[Autologin]\nUser=%s\nSession=plasmax11\nRelogin=false\n' "${EGPU_USER:-orangepi}" > /etc/sddm.conf.d/20-egpu-autologin.conf
     ;;
   xfce)
     echo "== XFCE (X11) =="
