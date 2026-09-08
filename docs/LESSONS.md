@@ -3,6 +3,27 @@
 Working notes carried between sessions of this project, consolidated on
 2026-09-07. Each one cost time to learn. Newer notes first.
 
+## GPU acceleration is decided by the loader, not by the driver (2026-09-08)
+
+- The vendor image's `/usr/local/lib` Mesa (PowerVR, no glvnd) sits ahead of
+  `/usr/lib/aarch64-linux-gnu` via `00-pvr-priority.conf`. With X on the NVIDIA card,
+  every EGL client on X11 got `softpipe`. Chrome (ANGLE), GTK4, mpv, VLC all rendered on
+  the CPU while `glxinfo`, `nvidia-smi` and the `dec` column all looked healthy.
+  `eglinfo -B -p x11` is the one check that shows it. One ld.so.conf.d file that sorts
+  first fixes it; `egpu-gl-profile` owns that file and `egpu-video-apply` flips it with
+  the Xorg layout so the PowerVR path still works without the eGPU.
+- "Decode on the GPU" and "render on the GPU" are separate questions. Firefox was
+  decoding on NVDEC through VA-API and still copying every frame through the CPU
+  because it had fallen back to GLX. Check `Dmabuf` logs for `used copied 0`.
+- Firefox picks the profile from `[Install<hash>] Default=`, not from `[Profile0]
+  Default=1`. A copied profile is invisible until that line points at it.
+- `pkill -f`/`pgrep -f` match the *whole* ssh command string, including a path inside an
+  unrelated `rm -rf`. Three shells lost this way in one session. Kill by PID list and
+  exclude `$$`, or use `pkill -x` on the process name.
+- Sandboxed GPU processes (Chrome) do not show in `nvidia-smi`'s process table. Use
+  `nvidia-smi dmon -s u` and DevTools `SystemInfo.getInfo` (via a temporary
+  `--user-data-dir` plus `--remote-debugging-port`, mandatory since Chrome 136).
+
 ## Desktop environments (2026-09-08)
 
 - GNOME 50 (Wayland-only) works on the eGPU from a clean boot with the GBM,

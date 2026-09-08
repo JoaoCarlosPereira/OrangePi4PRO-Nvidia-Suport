@@ -442,7 +442,7 @@ Orange Pi image:
 | Boot without microSD | no | yes, from USB in a Type-A port — [docs/BOOT-WITHOUT-SD.md](docs/BOOT-WITHOUT-SD.md) |
 | System on a fast disk (USB-C SSD, NVMe) | — | `egpu-install-to-disk`, offered by a first-boot menu; the boot medium keeps `/boot` |
 | Output selection, watchdogs, SSH hardening, `egpu-*` tools | — | installed by `install.sh` |
-| GPU video decode in players and browsers (NVDEC, VDPAU, VA-API, Chrome, Firefox) | — | `egpu-setup-video` — [docs/VIDEO-ACCELERATION.md](docs/VIDEO-ACCELERATION.md) |
+| GPU rendering and video decode system-wide (glvnd ahead of the PowerVR Mesa, NVDEC, VDPAU, VA-API, Chrome, Firefox, GTK4, mpv, VLC) | — | `egpu-setup-video`, `egpu-gl-profile` — [docs/VIDEO-ACCELERATION.md](docs/VIDEO-ACCELERATION.md) |
 | Desktop | XFCE | XFCE shipped; `egpu-setup-desktop plasma` installs Plasma 6.6 (X11 default) |
 
 

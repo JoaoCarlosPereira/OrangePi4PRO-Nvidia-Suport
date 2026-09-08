@@ -572,3 +572,27 @@ installed for whichever DM is in use (`install.sh` does this for gdm, lightdm an
 The flip-event warnings described in *The desktop wedges under use* were seen in
 long Wayland sessions on 580.142; watch `dmesg | grep -c __nv_drm_handle_flip_event`
 during the first days on GNOME.
+
+## The desktop is on the GPU but browsers and GTK4 apps still lag
+
+Symptom: `glxinfo` says NVIDIA, `nvidia-smi` lists Xorg, KWin and plasmashell as GPU clients,
+`nvidia-smi dmon` even shows the `dec` column busy while a video plays, and yet Chrome scrolls
+at a few frames per second, GTK4 dialogs are sluggish, `top` shows a browser process pegging a
+core.
+
+Diagnosis in one line:
+
+```
+eglinfo -B -p x11 | grep -E "vendor|renderer"
+```
+
+If it says `Mesa Project` / `softpipe`, every EGL client on X11 is rendering on the CPU. The
+stock image puts a non-glvnd Mesa for the PowerVR in `/usr/local/lib` ahead of everything else
+(`/etc/ld.so.conf.d/00-pvr-priority.conf`); with the screen on the NVIDIA card that Mesa has
+no driver and falls back to software. GLX is unaffected (the X server picks the vendor), which
+is why the desktop itself looks fine.
+
+Fix: `sudo egpu-gl-profile nvidia` (writes `/etc/ld.so.conf.d/00-egpu-glvnd.conf` and runs
+`ldconfig`), then restart the affected applications. `egpu-video-apply` does this at every
+boot on which the desktop goes to the GPU, and undoes it when it goes back to the PowerVR.
+Details and per-application evidence: [VIDEO-ACCELERATION.md](VIDEO-ACCELERATION.md).

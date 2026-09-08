@@ -14,6 +14,8 @@ if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
     rm -f /etc/X11/xorg.conf
     MUDOU=1
 fi
+# O desktop volta ao PowerVR: o loader tambem volta a ordem de fabrica.
+[ -x /usr/local/sbin/egpu-gl-profile ] && /usr/local/sbin/egpu-gl-profile integrada
 
 if [ "$ROLLBACK" -eq 0 ]; then
     sed -i 's/^EGPU_VIDEO=.*/EGPU_VIDEO=no/' /etc/default/egpu-video

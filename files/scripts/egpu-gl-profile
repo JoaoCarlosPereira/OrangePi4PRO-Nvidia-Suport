@@ -1,0 +1,65 @@
+#!/bin/sh
+# Decide qual pilha EGL/GLES os programas encontram primeiro no loader dinamico.
+#
+# A imagem do Orange Pi traz um Mesa proprio para o PowerVR em /usr/local/lib
+# (libEGL.so.1, libGLESv2.so.2, libgbm.so.1 SEM glvnd) e o poe na frente de tudo
+# com /etc/ld.so.conf.d/00-pvr-priority.conf. Com o desktop na NVIDIA isso e um
+# desastre silencioso: todo cliente EGL no X11 (Chrome/ANGLE, GTK4, mpv, VLC,
+# Firefox com x11-egl) cai no Mesa do PowerVR, que nao tem driver para a tela
+# da NVIDIA e renderiza em software ("softpipe"), na CPU. glxinfo mostra NVIDIA,
+# nvidia-smi mostra o Xorg e o KWin na GPU, e mesmo assim o navegador engasga.
+#
+#   egpu-gl-profile nvidia     glvnd (/usr/lib/aarch64-linux-gnu) na frente; GTK4 em GL
+#   egpu-gl-profile integrada  ordem de fabrica (Mesa do PowerVR primeiro); GTK4 em cairo
+#   egpu-gl-profile status     mostra quem esta na frente
+#
+# Chamado por egpu-video-apply a cada boot (segue a decisao de onde o desktop
+# sobe), por egpu-video-disable e por egpu-setup-video.
+set -eu
+
+CONF=/etc/ld.so.conf.d/00-egpu-glvnd.conf
+LIBDIR=/usr/lib/aarch64-linux-gnu
+ENVFILES="/etc/environment /etc/environment.d/90-egpu-vaapi.conf"
+
+set_gsk() {
+    for f in $ENVFILES; do
+        [ -f "$f" ] || continue
+        if grep -q '^GSK_RENDERER=' "$f"; then
+            sed -i "s/^GSK_RENDERER=.*/GSK_RENDERER=$1/" "$f"
+        else
+            echo "GSK_RENDERER=$1" >> "$f"
+        fi
+    done
+}
+
+first_egl() {
+    ldconfig -p 2>/dev/null | awk '/libEGL\.so\.1 /{print $NF; exit}'
+}
+
+case "${1:-status}" in
+    nvidia)
+        if [ ! -f "$CONF" ] || [ "$(first_egl)" != "$LIBDIR/libEGL.so.1" ]; then
+            printf '%s\n' \
+                '# eGPU: glvnd (EGL/GLES da NVIDIA) na frente do Mesa do PowerVR em /usr/local/lib.' \
+                '# Gerado por egpu-gl-profile; removido quando o desktop volta ao HDMI do Orange Pi.' \
+                "$LIBDIR" > "$CONF"
+            ldconfig
+        fi
+        # GTK 4.20 chama o renderizador GL de "gl" (era "ngl"); a fabrica deixa "cairo".
+        set_gsk gl
+        ;;
+    integrada)
+        if [ -f "$CONF" ]; then
+            rm -f "$CONF"
+            ldconfig
+        fi
+        set_gsk cairo
+        ;;
+    status)
+        echo "libEGL.so.1 -> $(first_egl)"
+        [ -f "$CONF" ] && echo "perfil: nvidia ($CONF)" || echo "perfil: integrada (ordem de fabrica)"
+        grep -h '^GSK_RENDERER=' $ENVFILES 2>/dev/null | sort -u
+        ;;
+    *)
+        echo "uso: egpu-gl-profile nvidia|integrada|status" >&2; exit 2 ;;
+esac

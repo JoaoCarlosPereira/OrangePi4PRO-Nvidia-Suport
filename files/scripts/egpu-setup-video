@@ -8,7 +8,9 @@
 #   ffmpeg / mpv             decode with -hwaccel cuda / --hwdec=nvdec (ffmpeg is built with nvdec)
 #   nvidia-vaapi-driver      VA-API -> NVDEC bridge (elFarto), built from source: Chrome and Firefox
 #                            only speak VA-API. Profiles: H.264, HEVC, VP9, AV1 (direct backend).
-#   environment              LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct MOZ_DISABLE_RDD_SANDBOX=1
+#   environment              LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct VDPAU_DRIVER=nvidia MOZ_DISABLE_RDD_SANDBOX=1
+#   loader                   egpu-gl-profile nvidia: glvnd ahead of the PowerVR Mesa, so EGL on X11 is the
+#                            NVIDIA one (otherwise Chrome/GTK4/mpv/VLC render in software)
 #   Google Chrome            launcher override with the VA-API feature flags
 #   Firefox                  Mozilla's official linux-aarch64 build in /opt/firefox (the snap cannot
 #                            see an external VA-API driver), with VA-API preferences via policies.json
@@ -29,8 +31,34 @@ rm -rf /tmp/nvidia-vaapi-driver; git clone -q --depth 1 https://github.com/elFar
 ( cd /tmp/nvidia-vaapi-driver && meson setup build --buildtype=release -Dprefix=/usr -Dlibdir=/usr/lib/aarch64-linux-gnu >/dev/null && ninja -C build >/dev/null && ninja -C build install >/dev/null )
 ls -la /usr/lib/aarch64-linux-gnu/dri/nvidia_drv_video.so
 echo "== environment (sessions and login shells)"
-printf 'LIBVA_DRIVER_NAME=nvidia\nNVD_BACKEND=direct\nMOZ_DISABLE_RDD_SANDBOX=1\n' > /etc/environment.d/90-egpu-vaapi.conf
-grep -q '^LIBVA_DRIVER_NAME=' /etc/environment || printf 'LIBVA_DRIVER_NAME=nvidia\nNVD_BACKEND=direct\nMOZ_DISABLE_RDD_SANDBOX=1\n' >> /etc/environment
+printf 'LIBVA_DRIVER_NAME=nvidia\nNVD_BACKEND=direct\nVDPAU_DRIVER=nvidia\nMOZ_DISABLE_RDD_SANDBOX=1\n' > /etc/environment.d/90-egpu-vaapi.conf
+for kv in LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct VDPAU_DRIVER=nvidia MOZ_DISABLE_RDD_SANDBOX=1; do
+  grep -q "^${kv%%=*}=" /etc/environment || echo "$kv" >> /etc/environment
+done
+echo "== loader: glvnd (NVIDIA EGL) ahead of the PowerVR Mesa in /usr/local/lib"
+# The stock image puts a non-glvnd Mesa (libEGL.so.1, libGLESv2.so.2, libgbm.so.1) first via
+# /etc/ld.so.conf.d/00-pvr-priority.conf. With X on the NVIDIA card every EGL client (Chrome's
+# ANGLE, GTK4, mpv, VLC, Firefox x11-egl) then lands on Mesa "softpipe" -- pure CPU rendering.
+# egpu-gl-profile flips the order; egpu-video-apply keeps it in sync with where the desktop runs.
+if [ -f /etc/X11/xorg.conf ] && grep -q egpu-layout /etc/X11/xorg.conf; then
+  /usr/local/sbin/egpu-gl-profile nvidia
+else
+  echo "  (desktop not on the NVIDIA card right now; egpu-video-apply will switch the loader at boot)"
+fi
+/usr/local/sbin/egpu-gl-profile status | sed 's/^/  /'
+echo "== players"
+printf '# eGPU NVIDIA: NVDEC (CUDA) first, VA-API (nvidia-vaapi-driver) as fallback\nhwdec=nvdec,vaapi\nvo=gpu\n' > /etc/mpv/mpv.conf
+# VLC: the stock image ships a "gstdecode" plugin that routes video through the Allwinner
+# Cedar decoder and copies frames back; prefer libavcodec + VDPAU on the GPU instead.
+for H in $( [ -n "${SUDO_USER:-}" ] && getent passwd "$SUDO_USER" | cut -d: -f6 ) /etc/skel; do
+  F="$H/.config/vlc/vlcrc"; [ -f "$F" ] || continue
+  sed -i -E 's/^#?codec=.*/codec=avcodec/; s/^#?avcodec-hw=.*/avcodec-hw=vdpau/; s/^vout=x11$/#vout=/' "$F"
+  echo "  $F: codec=avcodec avcodec-hw=vdpau"
+done
+if command -v flatpak >/dev/null && flatpak info com.moonlight_stream.Moonlight >/dev/null 2>&1; then
+  flatpak override --env=LIBVA_DRIVER_NAME=nvidia --env=NVD_BACKEND=direct --env=VDPAU_DRIVER=nvidia com.moonlight_stream.Moonlight
+  echo "  flatpak Moonlight: VA-API/VDPAU environment pinned"
+fi
 echo "== Google Chrome launcher (if installed)"
 if [ -f /usr/share/applications/google-chrome.desktop ]; then
   install -d /usr/local/share/applications
@@ -48,7 +76,9 @@ if [ "${EGPU_SKIP_FIREFOX:-}" = "" ]; then
 { "policies": { "Preferences": {
     "media.ffmpeg.vaapi.enabled": {"Value": true, "Status": "default"},
     "media.hardware-video-decoding.force-enabled": {"Value": true, "Status": "default"},
+    "media.rdd-ffmpeg.enabled": {"Value": true, "Status": "default"},
     "gfx.webrender.all": {"Value": true, "Status": "default"},
+    "gfx.x11-egl.force-enabled": {"Value": true, "Status": "default"},
     "widget.dmabuf.force-enabled": {"Value": true, "Status": "default"} } } }
 JSON
   install -d /usr/local/share/applications
@@ -68,4 +98,8 @@ DESK
 fi
 echo "== check"
 LIBVA_DRIVER_NAME=nvidia NVD_BACKEND=direct vainfo --display drm --device /dev/dri/renderD129 2>/dev/null | grep -E "Driver version|H264High|HEVCMain|VP9Profile0|AV1Profile0"
+if [ -n "${DISPLAY:-}" ] && command -v eglinfo >/dev/null; then
+  eglinfo -B -p x11 2>/dev/null | grep -E "EGL vendor|core profile renderer" | sed 's/^/  /'
+  eglinfo -B -p x11 2>/dev/null | grep -q "EGL vendor string: NVIDIA" || echo "  WARNING: EGL on X11 is not NVIDIA -- browsers will render on the CPU (see docs/VIDEO-ACCELERATION.md)"
+fi
 echo "done. In Chrome open chrome://gpu (Video Decode: hardware); in Firefox about:support -> Media. Watch nvidia-smi dmon -s u (dec column) while a video plays."

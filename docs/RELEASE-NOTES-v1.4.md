@@ -24,6 +24,20 @@ after flashing this image.
   option. [BOOT-WITHOUT-SD.md](BOOT-WITHOUT-SD.md).
 - All `egpu-*` tools, watchdogs, SSH hardening and upgrade shielding of v1.1–v1.3.
 
+## Fixed on `main` after the release (2026-09-08)
+
+- **EGL on X11 was software.** The vendor's PowerVR Mesa in `/usr/local/lib` shadowed
+  glvnd, so Chrome, GTK4, mpv and VLC rendered on the CPU even with the desktop on the
+  GPU. New `egpu-gl-profile`, called by `egpu-video-apply`, puts glvnd first whenever the
+  desktop runs on the NVIDIA card. `install.sh` ships it; on an installed v1.4 system run
+  `sudo egpu-gl-profile nvidia` once (or `sudo egpu-setup-video`).
+- `egpu-setup-video`: Firefox policies gain `gfx.x11-egl.force-enabled` and
+  `media.rdd-ffmpeg.enabled`; mpv defaults to `hwdec=nvdec,vaapi`; VLC is moved from the
+  Cedar `gstdecode` path to `avcodec` + VDPAU; `VDPAU_DRIVER=nvidia` and `GSK_RENDERER=gl`
+  join the session environment; Moonlight (Flatpak) gets the VA-API environment pinned.
+- Docs: [VIDEO-ACCELERATION.md](VIDEO-ACCELERATION.md) rewritten with the measured
+  per-application table; new troubleshooting entry for "desktop on the GPU but browsers lag".
+
 ## Unchanged
 
 `orangepi`/`orangepi` autologin, root locked, SSH host keys regenerated on first

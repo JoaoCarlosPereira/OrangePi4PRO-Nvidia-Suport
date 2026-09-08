@@ -24,6 +24,8 @@ usar_integrada() {
         rmmod nvidia_drm 2>/dev/null || true
         modprobe nvidia_drm modeset=1 fbdev=0 2>/dev/null || true
     fi
+    # Loader de volta a ordem de fabrica (Mesa do PowerVR primeiro).
+    [ -x /usr/local/sbin/egpu-gl-profile ] && /usr/local/sbin/egpu-gl-profile integrada
     logger -t egpu-video-apply "$1 -- desktop e console no HDMI do Orange Pi"
     exit 0
 }
@@ -43,6 +45,9 @@ usar_nvidia() {
         modprobe nvidia_drm modeset=1 fbdev=0 || true
     fi
     install -m 644 "$CANON" "$LIVE"
+    # Com o X na NVIDIA, EGL/GLES tem de resolver para a glvnd, nao para o Mesa
+    # do PowerVR em /usr/local/lib (que renderiza em software no X11 da NVIDIA).
+    [ -x /usr/local/sbin/egpu-gl-profile ] && /usr/local/sbin/egpu-gl-profile nvidia
     logger -t egpu-video-apply "monitor detectado na NVIDIA ($1) -- desktop e console na GPU"
     exit 0
 }
