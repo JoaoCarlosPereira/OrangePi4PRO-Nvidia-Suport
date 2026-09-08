@@ -5,10 +5,11 @@ Working notes carried between sessions of this project, consolidated on
 
 ## Desktop environments (2026-09-08)
 
-- GNOME 50 is Wayland-only and its installer makes GDM the display manager with
-  Wayland on: black screen on the GPU (nvidia_drm flip-event bug) and a machine
-  too slow for SSH. Put lightdm back and disable Wayland in `/etc/gdm3/custom.conf`.
-  Stay on X11 desktops.
+- GNOME 50 (Wayland-only) works on the eGPU from a clean boot with the GBM,
+  DRM-access and Mutter-primary pieces in place. What does not work: switching
+  display managers on a running system (GDM/Wayland → lightdm/X11 froze the
+  board), and judging a desktop on a boot where the GPU did not enumerate.
+  Change the DM, then reboot.
 - A root filesystem on a USB-C SSD needs the USB-C port in host mode from the
   kernel (`egpu-usbc-host` overlay); the vendor DT relies on a userspace script
   11 s into boot, which the initramfs never sees.

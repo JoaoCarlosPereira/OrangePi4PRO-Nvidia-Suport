@@ -538,24 +538,37 @@ for c in /sys/class/drm/card*-*; do
 done
 ```
 
-## Installing GNOME (or any Wayland-only desktop) leaves the GPU monitor black
+## Installing GNOME 50: it works on Wayland, but only after a clean reboot
 
-GNOME 50 ships **Wayland-only** sessions (`/usr/share/wayland-sessions/gnome.desktop`;
-there is no `gnome-xorg` any more). Installing `gnome-session gdm3` also makes GDM
-the display manager with `WaylandEnable=true` and autologin, so the next boot goes
-straight into Mutter on Wayland — the path where `nvidia_drm`'s flip-event bug
-freezes the session (see *The Wayland ceiling* above). Symptoms: the board boots,
-LEDs on, the monitor on the GPU stays black, and the machine can become so slow
-that SSH times out.
+GNOME 50 ships Wayland-only sessions and `apt install gnome-session gdm3` makes
+GDM the display manager with `WaylandEnable=true`. Verified 2026-09-08: with the
+prerequisites this repository installs (NVIDIA GBM backend, DRM node access
+rule, Mutter primary-device rule), **GNOME 50 on Wayland comes up on the RTX 3050
+from a clean boot**, autologin included, with no `nvidia_drm` flip warnings in a
+short session.
 
-Recovery, with the root filesystem on another machine (or from a working shell):
+Two things went wrong on the way and are worth knowing:
+
+- **The first boot into GDM showed nothing.** That boot also had the GPU not
+  enumerated on the bus, and the root disk was pulled while the system was
+  running, so no log survived. Do not blame GNOME for a boot where `lspci` has
+  no `01:00.0`.
+- **Switching display managers live wedges the GPU.** Stopping GDM (Wayland,
+  KMS through `nvidia_drm`) and starting lightdm (Xorg with the NVIDIA X driver)
+  on a running system froze the board hard within a minute — the same class of
+  hang as killing a wedged Xorg. Change the default and **reboot**:
 
 ```bash
-ln -sfn /usr/lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
-echo /usr/sbin/lightdm > /etc/X11/default-display-manager
-sed -i 's/^WaylandEnable=true/WaylandEnable=false/' /etc/gdm3/custom.conf
+sudo ln -sfn /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
+echo /usr/sbin/gdm3 | sudo tee /etc/X11/default-display-manager
+sudo sed -i 's/^WaylandEnable=false/WaylandEnable=true/' /etc/gdm3/custom.conf
+sudo reboot
 ```
 
-GNOME can stay installed; it just cannot drive this GPU until the `nvidia_drm`
-bug is fixed upstream. X11 desktops — XFCE (shipped), Plasma X11, MATE, Cinnamon —
-are the ones that work.
+To go back to XFCE/lightdm, the mirror image (`lightdm.service`, `/usr/sbin/lightdm`),
+again followed by a reboot. Keep `files/systemd/lightdm.service.d/egpu-rollback.conf`
+installed for whichever DM is in use (`install.sh` does this for gdm, lightdm and sddm).
+
+The flip-event warnings described in *The desktop wedges under use* were seen in
+long Wayland sessions on 580.142; watch `dmesg | grep -c __nv_drm_handle_flip_event`
+during the first days on GNOME.
