@@ -58,18 +58,19 @@ echo "== PCIe device tree overlays (Gen2 + 512 MiB prefetchable aperture) =="
 if [ -z "${EGPU_SKIP_OVERLAYS:-}" ]; then
     command -v dtc >/dev/null || apt-get install -y -q device-tree-compiler >/dev/null
     install -d /boot/overlay-user
-    for o in egpu-pcie-gen2 egpu-pcie-highmem egpu-pcie-gen1; do
+    for o in egpu-pcie-gen2 egpu-pcie-highmem egpu-usbc-host egpu-pcie-gen1; do
         dtc -@ -q -I dts -O dtb -o "/boot/overlay-user/$o.dtbo" "$F/overlays/$o.dts"
         say "/boot/overlay-user/$o.dtbo"
     done
     ENV=/boot/orangepiEnv.txt
     [ -f "$ENV.before-egpu" ] || cp "$ENV" "$ENV.before-egpu"
     if grep -q '^user_overlays=' "$ENV"; then
-        sed -i 's/^user_overlays=.*/user_overlays=egpu-pcie-gen2 egpu-pcie-highmem/' "$ENV"
+        sed -i 's/^user_overlays=.*/user_overlays=egpu-pcie-gen2 egpu-pcie-highmem egpu-usbc-host/' "$ENV"
     else
         printf '\nuser_overlays=egpu-pcie-gen2 egpu-pcie-highmem\n' >> "$ENV"
     fi
-    say "$ENV: user_overlays=egpu-pcie-gen2 egpu-pcie-highmem (backup: $ENV.before-egpu)"
+    say "$ENV: user_overlays=egpu-pcie-gen2 egpu-pcie-highmem egpu-usbc-host (backup: $ENV.before-egpu)"
+    say "  egpu-usbc-host: USB-C port is a host from the kernel, so a root filesystem on a USB-C SSD is found at boot"
     say "  Gen1 overlay installed too, for fallback; Gen3 halts the NVIDIA GSP -- see docs/PCIE-LINK-SPEED.md"
     say "  power-cycle the GPU's PSU before the next boot: the GPU remembers the host's previous max speed"
 else

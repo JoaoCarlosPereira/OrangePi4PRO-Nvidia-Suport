@@ -80,7 +80,16 @@ microSD or USB 2.0 stick   /boot (kernel, DTB, overlays, orangepiEnv.txt) + a co
 disk (USB-C SSD, NVMe)     /   -- GPT, one ext4 partition, the whole disk, exclusively for the system
 ```
 
-The disk's `/etc/fstab` mounts the boot medium at `/media/bootfs` and bind-mounts
+**USB-C needs one more overlay.** The vendor device tree declares the USB-C port
+as OTG with VBUS detection, and a userspace script switches it to host mode about
+11 s into the boot — so a root filesystem on a USB-C SSD is never found by the
+initramfs (board LEDs on, no video, no network). `egpu-usbc-host.dtbo`
+(`usb_port_type = <1>`) makes the port a host from the kernel: the SSD enumerates at
+2.3 s instead of 11.9 s. `install.sh` installs it; the cost is that the board can
+no longer act as a USB gadget on that port.
+
+The disk's `/etc/fstab` mounts the boot medium at `/media/bootfs` (hidden from
+file managers with `x-gvfs-hide`) and bind-mounts
 its `/boot` on `/boot`, so kernel updates and `orangepiEnv.txt` edits still land
 where U-Boot reads them. The boot medium's `orangepiEnv.txt` gets
 `rootdev=UUID=<disk>`; `egpu-install-to-disk --revert` points it back.
@@ -101,4 +110,8 @@ root is on another disk. While the password is still the default `orangepi` it
 is used silently; once changed, `sudo` asks. Log: `/var/log/egpu-install-to-disk.log`.
 
 Expect a first copy to a USB 2.0 stick to take 30–60 minutes (many small files);
-a USB-C SSD is a few minutes.
+a USB-C SSD is a few minutes (37 MB/s measured with a SanDisk SSD PLUS).
+
+After the install the system disk and the boot medium carry a udev rule
+(`70-egpu-system-disk.rules`, `UDISKS_SYSTEM=1`) so the desktop treats them as
+internal drives: no removable-media icon, no eject, no automount attempts.
